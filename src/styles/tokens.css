@@ -1,0 +1,23 @@
+:root {
+  --bg-canvas: linear-gradient(180deg, #FFFFFF 0%, #F8FAFD 55%, #F3F6FC 100%);
+  --surface-drawer: #F0F4F9;
+  --surface-card: #F0F4F9;
+  --surface-elevated: #E9EEF6;
+  --surface-hover: #DFE6F2;
+  --surface-agent: linear-gradient(180deg, #F7F9FC 0%, #EEF3FA 100%);
+  --text-primary: #1F1F1F;
+  --text-secondary: #444746;
+  --text-muted: #747775;
+  --accent-ai: linear-gradient(135deg, #1A73E8 0%, #4285F4 60%, #7BAAF7 100%);
+  --accent-solid: #1A73E8;
+  --success: #137333;
+  --error: #b3261e;
+  --radius-card: 20px;
+  --radius-pill: 999px;
+  --shadow-float: 0 8px 28px rgb(31 48 78 / 10%);
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  color: var(--text-primary);
+  background: #F8FAFD;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}

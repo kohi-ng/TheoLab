@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mô phỏng chuẩn độ</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; color: #1f1f1f; background: #f0f4f9; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 18px; }
+      .widget { max-width: 700px; margin: auto; padding: 20px; border-radius: 22px; background: #fff; }
+      h1 { font-size: 19px; margin: 0 0 6px; }
+      p { color: #5b616b; margin: 6px 0 18px; font-size: 14px; }
+      .values { display: flex; justify-content: space-between; gap: 12px; color: #5b616b; font-size: 13px; }
+      input[type="range"] { width: 100%; accent-color: #1a73e8; margin: 14px 0; }
+      .solution { min-height: 84px; border-radius: 18px; background: #f8fafc; display: flex; align-items: center; gap: 16px; padding: 16px; }
+      .flask { width: 42px; height: 54px; flex: 0 0 42px; border-radius: 8px 8px 15px 15px; background: #fff; box-shadow: inset 0 -12px 0 var(--solution-color, #eef2f6); }
+      .reading { font-size: 22px; font-weight: 650; }
+      .stage { color: #747775; font-size: 13px; margin-top: 3px; }
+      @media (max-width: 480px) { body { padding: 10px; } .widget { padding: 16px; } }
+    </style>
+  </head>
+  <body>
+    <main class="widget">
+      <h1>Chuẩn độ CH₃COOH bằng NaOH</h1>
+      <p>Kéo thanh trượt để thêm bazơ và quan sát pH, màu chỉ thị phenolphthalein.</p>
+      <div class="values"><span>NaOH đã thêm</span><strong id="volume-label">0.0 mL</strong></div>
+      <input id="volume" type="range" min="0" max="50" step="0.1" value="0" aria-label="Thể tích NaOH">
+      <div class="solution">
+        <div class="flask" id="flask" aria-hidden="true"></div>
+        <div><div class="reading" id="ph">pH —</div><div class="stage" id="stage">Dung dịch axit ban đầu</div></div>
+      </div>
+    </main>
+    <script>
+      const slider = document.querySelector('#volume');
+      const initialState = { pKa: 4.76, Ca: 0.1, Va: 25, Cb: 0.1 };
+      let state = { ...initialState };
+      let theme = {};
+
+      function calculate() {
+        const volume = Number(slider.value);
+        const molesAcid = state.Ca * state.Va / 1000;
+        const molesBase = state.Cb * volume / 1000;
+        const equivalenceVolume = molesAcid / state.Cb * 1000;
+        let pH;
+        let stage;
+        if (volume === 0) {
+          pH = (state.pKa - Math.log10(state.Ca)) / 2;
+          stage = 'Dung dịch axit ban đầu';
+        } else if (volume < equivalenceVolume) {
+          pH = state.pKa + Math.log10(molesBase / (molesAcid - molesBase));
+          stage = volume < equivalenceVolume / 2 ? 'Vùng đệm axit' : 'Gần điểm tương đương';
+        } else if (Math.abs(volume - equivalenceVolume) < 0.05) {
+          const kb = 1e-14 / Math.pow(10, -state.pKa);
+          const concentration = molesAcid / ((state.Va + volume) / 1000);
+          pH = 14 + Math.log10(Math.sqrt(kb * concentration));
+          stage = 'Điểm tương đương';
+        } else {
+          const excess = (molesBase - molesAcid) / ((state.Va + volume) / 1000);
+          pH = 14 + Math.log10(excess);
+          stage = 'Bazơ dư';
+        }
+        pH = Math.max(0, Math.min(14, pH));
+        const pink = pH >= 8.2;
+        document.querySelector('#volume-label').textContent = `${volume.toFixed(1)} mL`;
+        document.querySelector('#ph').textContent = `pH ${pH.toFixed(2)}`;
+        document.querySelector('#stage').textContent = stage;
+        document.querySelector('#flask').style.setProperty('--solution-color', pink ? '#f5b5d7' : '#eaf0f6');
+        parent.postMessage({
+          type: 'THEOLAB_WIDGET_STATE',
+          payload: { volumeNaOHmL: volume, pH: Number(pH.toFixed(3)), stage, indicator: pink ? 'pink' : 'colorless' },
+        }, '*');
+      }
+
+      slider.addEventListener('input', calculate);
+      window.addEventListener('message', (event) => {
+        if (event.source !== parent || event.data?.type !== 'THEOLAB_INIT') return;
+        state = { ...initialState, ...(event.data.payload?.state ?? {}) };
+        theme = event.data.payload?.theme ?? {};
+        document.documentElement.style.setProperty('--widget-accent', theme['--accent-solid'] ?? '#1a73e8');
+        slider.style.accentColor = 'var(--widget-accent)';
+        const initialVolume = Number(state.volumeNaOHmL);
+        if (Number.isFinite(initialVolume)) slider.value = String(Math.max(0, Math.min(50, initialVolume)));
+        calculate();
+      });
+      calculate();
+    </script>
+  </body>
+</html>

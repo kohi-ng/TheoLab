@@ -1,0 +1,6 @@
+.env*
+*.bin
+content-private/
+node_modules/
+dist/
+.DS_Store

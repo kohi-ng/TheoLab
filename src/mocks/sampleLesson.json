@@ -1,0 +1,109 @@
+{
+  "id": "acid-base-titration-weak-acid",
+  "schema_version": "1.0.0",
+  "core": {
+    "subject": "Hóa phân tích",
+    "owner_id": "local-owner",
+    "visibility": "private",
+    "allowed_roles": ["owner"],
+    "updated_at": "2026-11-25T00:00:00.000Z"
+  },
+  "payload": {
+    "title": "Chuẩn độ axit yếu bằng bazơ mạnh",
+    "reference_data": {
+      "acid": "CH₃COOH",
+      "base": "NaOH",
+      "ka": 1.8e-5,
+      "temperature_c": 25,
+      "initial_acid_volume_ml": 25,
+      "acid_concentration_mol_l": 0.1,
+      "base_concentration_mol_l": 0.1
+    },
+    "blocks": [
+      {
+        "id": "concept",
+        "type": "theory",
+        "title": "Ý tưởng chính",
+        "content": "Chuẩn độ axit axetic bằng NaOH là phản ứng trung hòa. Trước điểm tương đương, hỗn hợp CH₃COOH/CH₃COO⁻ tạo dung dịch đệm; tại điểm tương đương, ion acetate thủy phân làm pH lớn hơn 7.",
+        "formula": "\\ce{CH3COOH + OH^- -> CH3COO^- + H2O}"
+      },
+      {
+        "id": "equivalence",
+        "type": "callout",
+        "title": "Tại điểm tương đương",
+        "content": "Số mol NaOH thêm vào bằng số mol axit ban đầu. Tính pH từ cân bằng thủy phân của CH₃COO⁻, không giả sử pH = 7."
+      },
+      {
+        "id": "buffer",
+        "type": "collapsible",
+        "title": "Vùng đệm",
+        "summary": "Mở để xem quan hệ Henderson–Hasselbalch",
+        "content": "Khi đã thêm một phần bazơ nhưng chưa tới tương đương: pH = pKₐ + log(n_CH₃COO⁻ / n_CH₃COOH). Tại nửa điểm tương đương, pH = pKₐ."
+      },
+      {
+        "id": "question-ph",
+        "type": "mcq",
+        "title": "Câu hỏi nhanh",
+        "question": "Tại nửa điểm tương đương, pH của dung dịch bằng giá trị nào?",
+        "options": [
+          { "text": "pKₐ của axit yếu", "feedback": "Đúng: phương trình Henderson–Hasselbalch cho tỉ số hai dạng bằng 1." },
+          { "text": "7.00", "feedback": "Chưa đúng. Đây không phải điểm tương đương của axit yếu." },
+          { "text": "pK_w", "feedback": "Chưa đúng. pK_w liên hệ pH và pOH của nước." }
+        ],
+        "answer": 0
+      },
+      {
+        "id": "numeric-titrant",
+        "type": "numeric",
+        "title": "Tự luyện",
+        "prompt": "Với 25.0 mL CH₃COOH 0.100 M, cần bao nhiêu mL NaOH 0.100 M để đạt điểm tương đương?",
+        "placeholder": "Thể tích (mL)",
+        "answer": 25,
+        "tolerance": 0.1
+      },
+      {
+        "id": "titration-dashboard",
+        "type": "widget_embed",
+        "title": "Mô phỏng tương tác",
+        "file": "demo-titration.html",
+        "height": 360,
+        "initial_state": {
+          "pKa": 4.76,
+          "Ca": 0.1,
+          "Va": 25,
+          "Cb": 0.1
+        }
+      },
+      {
+        "id": "pka-calculator",
+        "type": "widget_native",
+        "title": "Widget tính pKₐ",
+        "widget_id": "formula_calc",
+        "props": {
+          "title": "Máy tính pKₐ từ Ka",
+          "ka": 0.000018
+        }
+      },
+      {
+        "id": "reference",
+        "type": "google_embed",
+        "title": "Tài liệu tham khảo",
+        "url": "https://drive.google.com/file/d/EXAMPLE_FILE_ID/view"
+      }
+    ]
+  },
+  "extensions": {
+    "ai_embedding": {
+      "index_path": "content-private/index.bin",
+      "dimensions": 384
+    },
+    "labmana_bridge": {
+      "enabled": false,
+      "schema": "pending"
+    },
+    "google_embed": {
+      "provider": "google-drive",
+      "preview": true
+    }
+  }
+}
