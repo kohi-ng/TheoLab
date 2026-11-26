@@ -99,7 +99,7 @@ export type TheonMatrixSpeed = (typeof THEON_MATRIX_SPEEDS)[number];
 import { THEON_SKILL_IDS, type TheonSkillId } from './theonSkills';
 
 export const DEFAULT_THEON_SYSTEM_PROMPT =
-  'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
+  'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `draw_chart` để vẽ biểu đồ dữ liệu (cột, đường, hai trục, tròn, vành khuyên, scatter, miền) trực tiếp lên màn hình hộp, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
 
 export const TheonSettingsSchema = z.object({
   provider: z.enum(THEON_PROVIDERS),

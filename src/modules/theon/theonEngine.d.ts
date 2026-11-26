@@ -1,5 +1,6 @@
 import type { TheonExpression, TheonHeadStyle } from './theonConfig';
 import type { ExerciseTabPayload } from './exerciseSchema';
+import type { NormalizedChartSpec } from './chartSchema';
 
 export type TheonMode = 'reading' | 'mouse';
 export type TheonGraphMode = 'wave' | 'bars' | 'orbit';
@@ -55,6 +56,7 @@ export interface TheonEngineController {
   replayMatrix(): void;
   spawnBook(options?: SpawnBookOptions): unknown;
   spawnNoteCard(options?: SpawnNoteCardOptions): unknown;
+  setScreenChart(spec: NormalizedChartSpec | null): void;
   setPinnedGraph(visible: boolean, mode?: TheonGraphMode): void;
   clearObjects(): void;
   destroy(): void;

@@ -250,3 +250,89 @@ describe('Theon native dock registration & exercise persistence', () => {
     expect(parsed?.tabs[1]?.exercisePayload?.title).toBe('Bài tập đệm');
   });
 });
+
+describe('Theon draw_chart tool & schema conventions', () => {
+  it('validates and normalizes dual_axis, pie/donut, scatter, and hide calls', async () => {
+    const onDrawChart = vi.fn();
+
+    // 1. Dual-axis chart (bar left + line right)
+    const dualRes = await executeTheonTool(
+      'draw_chart',
+      {
+        visible: true,
+        chart_type: 'dual_axis',
+        title: 'Chuẩn độ CH3COOH',
+        x_label: 'V NaOH (mL)',
+        y_label: 'pH',
+        y2_label: 'dpH/dV',
+        labels: ['0', '10', '20', '25'],
+        series: [
+          { name: 'pH', kind: 'line', axis: 'left', values: [2.9, 4.6, 5.4, 8.7] },
+          { name: 'dpH/dV', kind: 'bar', axis: 'right', values: [0.1, 0.08, 0.2, 1.8] },
+        ],
+      },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(dualRes.ok).toBe(true);
+    expect(onDrawChart).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chartType: 'dual_axis',
+        yLabel: 'pH',
+        y2Label: 'dpH/dV',
+        series: [
+          expect.objectContaining({ name: 'pH', axis: 'left', kind: 'line' }),
+          expect.objectContaining({ name: 'dpH/dV', axis: 'right', kind: 'bar' }),
+        ],
+      }),
+    );
+
+    // 2. Pie chart via slices
+    const pieRes = await executeTheonTool(
+      'draw_chart',
+      {
+        visible: true,
+        chart_type: 'donut',
+        title: 'Thành phần dung dịch',
+        slices: [
+          { label: 'Nước', value: 75 },
+          { label: 'Ethanol', value: 25 },
+        ],
+      },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(pieRes.ok).toBe(true);
+    const donutArg = onDrawChart.mock.calls.at(-1)?.[0];
+    expect(donutArg?.slices).toHaveLength(2);
+    expect(donutArg?.slices[0]?.percent).toBeCloseTo(75);
+
+    // 3. Scatter chart via numeric points
+    const scatterRes = await executeTheonTool(
+      'draw_chart',
+      {
+        visible: true,
+        chart_type: 'scatter',
+        title: 'Đường chuẩn hấp thụ quang',
+        series: [{ name: 'Mẫu đo', points: [{ x: 0.1, y: 0.12 }, { x: 0.2, y: 0.25 }] }],
+      },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(scatterRes.ok).toBe(true);
+
+    // 4. Hide chart cleanly
+    const hideRes = await executeTheonTool(
+      'draw_chart',
+      { visible: false },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(hideRes.ok).toBe(true);
+    expect(onDrawChart).toHaveBeenLastCalledWith(null);
+
+    // 5. Reject missing data when visible = true
+    const badRes = await executeTheonTool(
+      'draw_chart',
+      { visible: true, chart_type: 'bar', title: 'Rỗng' },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(badRes.ok).toBe(false);
+  });
+});

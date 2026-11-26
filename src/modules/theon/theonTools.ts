@@ -22,12 +22,17 @@ import { LIBRARY_DOCUMENTS } from '../library/libraryCatalog.js';
 import { findAppDefinition, isAllowedAppUrl } from '../apps/appCatalog';
 import { postMcpMessage } from '../agents/mcp/mcpClient.js';
 import { ExerciseTabPayloadSchema, type ExerciseTabPayload } from './exerciseSchema';
+import {
+  CHART_TYPES,
+  DrawChartArgsSchema,
+  normalizeChartSpec,
+  type NormalizedChartSpec,
+} from './chartSchema';
 import { THEON_EXPRESSIONS, type TheonExpression, type TheonSettings } from './theonConfig';
 import { findTheonSkill, THEON_SKILL_IDS } from './theonSkills';
 import type {
   SpawnBookOptions,
   SpawnNoteCardOptions,
-  TheonGraphMode,
   TheonObjectActionMeta,
 } from './theonEngine.js';
 
@@ -78,11 +83,6 @@ export const OpenAppTabArgsSchema = z.object({
   app_id: z.string().min(1).max(40),
   title: z.string().max(64).optional(),
   url: z.string().max(500).optional(),
-});
-
-export const Show3dGraphArgsSchema = z.object({
-  visible: z.boolean(),
-  mode: z.enum(['wave', 'bars', 'orbit']).optional(),
 });
 
 export const CallMcpToolArgsSchema = z.object({
@@ -253,20 +253,78 @@ const CORE_TOOL_SPECS: readonly TheonToolSpec[] = Object.freeze([
     },
   },
   {
-    name: 'show_3d_graph',
-    description: 'Bật hoặc tắt đồ thị 3D ghim trong hộp Theon (wave: sóng hàm, bars: cột 3D, orbit: quỹ đạo).',
+    name: 'draw_chart',
+    description:
+      'Vẽ biểu đồ dữ liệu trực tiếp lên màn hình kính khung hộp Theon với hiệu ứng kết tinh ma trận (hỗ trợ: line, bar, dual_axis, pie, donut, scatter, area). Truyền visible=false để ẩn biểu đồ.',
     parameters: {
       type: 'object',
       properties: {
-        visible: { type: 'boolean', description: 'true để hiện đồ thị, false để ẩn.' },
-        mode: { type: 'string', enum: ['wave', 'bars', 'orbit'], description: 'Kiểu đồ thị 3D.' },
+        visible: { type: 'boolean', description: 'true để vẽ/cập nhật biểu đồ, false để ẩn khỏi màn hình hộp.' },
+        chart_type: {
+          type: 'string',
+          enum: [...CHART_TYPES],
+          description: 'Loại biểu đồ: line (đường), bar (cột), dual_axis (hai trục Y trái/phải), pie (tròn), donut (vành khuyên), scatter (phân tán x-y), area (miền).',
+        },
+        title: { type: 'string', description: 'Tiêu đề biểu đồ.' },
+        subtitle: { type: 'string', description: 'Phụ đề hoặc nguồn dữ liệu (tùy chọn).' },
+        x_label: { type: 'string', description: 'Nhãn trục ngang X.' },
+        y_label: { type: 'string', description: 'Nhãn trục tung trái Y.' },
+        y2_label: { type: 'string', description: 'Nhãn trục tung phải Y2 (dùng cho dual_axis).' },
+        labels: {
+          type: 'array',
+          description: 'Nhãn các mốc trên trục X (cho line, bar, area, dual_axis) hoặc nhãn các phần (pie/donut).',
+          items: { type: 'string' },
+        },
+        series: {
+          type: 'array',
+          description: 'Các chuỗi dữ liệu số (1-6 chuỗi). Với dual_axis, đặt axis="left" cho trục trái và axis="right" cho trục phải; có thể trộn kind="bar" và kind="line".',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Tên chuỗi hiển thị trong chú giải.' },
+              kind: { type: 'string', enum: ['line', 'bar', 'area', 'scatter'], description: 'Kiểu vẽ riêng của chuỗi.' },
+              axis: { type: 'string', enum: ['left', 'right'], description: 'Trục tung gắn với chuỗi (mặc định left).' },
+              color: { type: 'string', description: 'Mã màu hex tùy chọn (VD: #60a5fa).' },
+              values: { type: 'array', items: { type: 'number' }, description: 'Dãy giá trị Y theo thứ tự labels.' },
+              points: {
+                type: 'array',
+                description: 'Danh sách cặp tọa độ { x, y } cho scatter hoặc đường hàm số.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    x: { type: 'number' },
+                    y: { type: 'number' },
+                    label: { type: 'string' },
+                  },
+                  required: ['x', 'y'],
+                },
+              },
+            },
+            required: ['name'],
+          },
+        },
+        slices: {
+          type: 'array',
+          description: 'Các lát của biểu đồ tròn/vành khuyên (pie/donut).',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string' },
+              value: { type: 'number' },
+              color: { type: 'string' },
+            },
+            required: ['label', 'value'],
+          },
+        },
+        show_grid: { type: 'boolean', description: 'Hiện lưới tọa độ (mặc định true).' },
+        show_values: { type: 'boolean', description: 'Hiện nhãn số liệu trực tiếp trên cột/lát.' },
       },
       required: ['visible'],
     },
   },
   {
     name: 'clear_objects',
-    description: 'Dọn sạch các cuốn sách và thẻ 3D đang nổi trong hộp Theon.',
+    description: 'Dọn sạch các cuốn sách, thẻ 3D và biểu đồ đang hiển thị trong hộp Theon.',
     parameters: {
       type: 'object',
       properties: {},
@@ -310,7 +368,7 @@ export interface TheonToolHandlers {
   onSpawnTag?: (options: SpawnNoteCardOptions) => void;
   onOpenExerciseTab?: (payload: ExerciseTabPayload) => { tabId: string; title: string } | void;
   onOpenAppTab?: (appId: string, options?: { title?: string; url?: string }) => boolean | void;
-  onShowGraph?: (visible: boolean, mode?: TheonGraphMode) => void;
+  onDrawChart?: (spec: NormalizedChartSpec | null) => void;
   onClearObjects?: () => void;
 }
 
@@ -588,14 +646,37 @@ export async function executeTheonTool(
     return { ok: true, tool: name, result: { opened: true, appId: def.id, name: def.name } };
   }
 
-  if (name === 'show_3d_graph') {
-    const parsed = Show3dGraphArgsSchema.safeParse(parsedInput);
+  if (name === 'draw_chart') {
+    const parsed = DrawChartArgsSchema.safeParse(parsedInput);
     if (!parsed.success) {
-      return { ok: false, tool: name, error: 'Tham số show_3d_graph không hợp lệ.' };
+      return {
+        ok: false,
+        tool: name,
+        error: `Tham số draw_chart không hợp lệ: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+      };
     }
-    handlers.onStep?.(parsed.data.visible ? 'THEON // KHỞI TẠO ĐỒ THỊ 3D...' : 'THEON // ẨN ĐỒ THỊ 3D...');
-    handlers.onShowGraph?.(parsed.data.visible, parsed.data.mode);
-    return { ok: true, tool: name, result: { visible: parsed.data.visible, mode: parsed.data.mode ?? 'wave' } };
+    if (!parsed.data.visible) {
+      handlers.onStep?.('THEON // ĐANG ẨN BIỂU ĐỒ...');
+      handlers.onDrawChart?.(null);
+      return { ok: true, tool: name, result: { visible: false } };
+    }
+    const normalized = normalizeChartSpec(parsed.data);
+    if (!normalized) {
+      return { ok: false, tool: name, error: 'Không thể chuẩn hóa dữ liệu biểu đồ.' };
+    }
+    handlers.onStep?.(`THEON // KẾT TINH BIỂU ĐỒ ${normalized.chartType.toUpperCase()}...`);
+    handlers.onDrawChart?.(normalized);
+    return {
+      ok: true,
+      tool: name,
+      result: {
+        visible: true,
+        chart_type: normalized.chartType,
+        title: normalized.title,
+        seriesCount: normalized.series.length,
+        sliceCount: normalized.slices.length,
+      },
+    };
   }
 
   if (name === 'clear_objects') {

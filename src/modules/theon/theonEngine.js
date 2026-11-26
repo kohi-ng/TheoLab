@@ -1,5 +1,6 @@
 // @ts-nocheck
 import * as THREE from "three";
+import { renderChartToCanvas } from "./chartCanvasRenderer.ts";
 
 let activeStop = null;
 
@@ -246,6 +247,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
     const dynamicObjects = [];   // Books & Note Cards
     const matrixBursts = [];     // Cụm hạt ký tự cục bộ khi sinh vật thể
     let pinnedGraphObj = null;
+    let screenChartObj = null;
     let bookCycleIdx = 0;
     let noteCycleIdx = 0;
 
@@ -514,6 +516,10 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       if (pinnedGraphObj) {
         const gScale = clamp(state.screenW / 14.5, 0.62, 1.05);
         pinnedGraphObj.group.scale.setScalar(gScale);
+      }
+
+      if (screenChartObj) {
+        layoutScreenChart();
       }
 
       if (bgRainSystem) {
@@ -2589,8 +2595,136 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         const obj = dynamicObjects.pop();
         disposeDynamicObject(obj);
       }
+      setScreenChart(null);
       container.style.cursor = 'default';
       updateObjectCountUI();
+    }
+
+    /**
+     * Biểu đồ dữ liệu ma trận ép sát mặt kính trước của khung hộp (z = -0.09).
+     * Vẽ sắc nét từ NormalizedChartSpec (line, bar, dual_axis, pie, donut, scatter, area)
+     * và kết tinh bằng hiệu ứng ma trận dọc + cụm ký tự đổ như các vật thể 3D khác.
+     */
+    function buildScreenChartObject() {
+      const revealUniforms = {
+        uRevealY: { value: 0.58 },
+        uMatrixActive: { value: 1.0 },
+        uScanColor: { value: new THREE.Color('#60a5fa') }
+      };
+
+      const group = new THREE.Group();
+      // Ép sát mặt kính trước của hộp (zF = -0.02), phẳng song song màn hình (không nghiêng)
+      group.position.set(0.0, 0.0, -0.09);
+      group.rotation.set(0, 0, 0);
+      group.visible = false;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 760;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+
+      const planeGeo = new THREE.PlaneGeometry(1, 1);
+      const planeMat = applyVerticalMatrixReveal(
+        new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+        revealUniforms,
+        'theon-chart-reveal-v1',
+      );
+      const panelMesh = new THREE.Mesh(planeGeo, planeMat);
+      panelMesh.renderOrder = 6;
+      group.add(panelMesh);
+
+      const edgeMat = createObjectEdgeMaterial(revealUniforms, 0.92);
+      const frameLines = new THREE.LineSegments(new THREE.EdgesGeometry(planeGeo), edgeMat);
+      frameLines.position.z = 0.004;
+      frameLines.renderOrder = 7;
+      group.add(frameLines);
+
+      scene.add(group);
+
+      return {
+        group,
+        panelMesh,
+        canvas,
+        texture,
+        revealUniforms,
+        visible: false,
+        materializing: false,
+        matTime: 0,
+        matDuration: 1.35,
+        currentSpec: null,
+        chartW: 8.0,
+        chartH: 5.0,
+      };
+    }
+
+    function layoutScreenChart() {
+      if (!screenChartObj) return;
+      const maxW = Math.max(2.4, state.screenW * 0.93);
+      const maxH = Math.max(2.4, state.screenH * 0.84);
+      // Giữ tỉ lệ dễ đọc, không bị méo tròn/chữ khi kéo dock-splitter
+      const chartW = maxW;
+      const chartH = clamp(chartW * 0.62, Math.min(maxH, 4.4), maxH);
+
+      screenChartObj.chartW = chartW;
+      screenChartObj.chartH = chartH;
+      screenChartObj.group.scale.set(chartW, chartH, 1);
+      screenChartObj.group.position.set(0.0, 0.0, -0.09);
+
+      if (screenChartObj.currentSpec) {
+        const cw = 1280;
+        const ch = Math.max(600, Math.min(1100, Math.round(cw * (chartH / chartW))));
+        renderChartToCanvas(screenChartObj.canvas, screenChartObj.currentSpec, cw, ch);
+        screenChartObj.texture.needsUpdate = true;
+      }
+    }
+
+    function setScreenChart(spec) {
+      if (!screenChartObj) return;
+      if (!spec) {
+        screenChartObj.visible = false;
+        screenChartObj.materializing = false;
+        screenChartObj.currentSpec = null;
+        screenChartObj.group.visible = false;
+        return;
+      }
+
+      screenChartObj.currentSpec = spec;
+      layoutScreenChart();
+      screenChartObj.visible = true;
+      screenChartObj.group.visible = true;
+      screenChartObj.materializing = true;
+      screenChartObj.matTime = 0;
+      screenChartObj.revealUniforms.uMatrixActive.value = 1.0;
+      screenChartObj.revealUniforms.uRevealY.value = 0.58;
+
+      spawnLocalMatrixBurst(
+        new THREE.Vector3(0.0, 0.0, -0.22),
+        screenChartObj.chartW * 0.48,
+        screenChartObj.chartH * 0.48,
+        0.16,
+        1.35,
+      );
+      if (state.autoExpression) setExpression('focused', false);
+    }
+
+    function updateScreenChart(dt) {
+      if (!screenChartObj || !screenChartObj.visible || !screenChartObj.materializing) return;
+      screenChartObj.matTime += dt;
+      const p = smoothstep(0, screenChartObj.matDuration, screenChartObj.matTime);
+      screenChartObj.revealUniforms.uRevealY.value = lerp(0.58, -0.58, p);
+      if (screenChartObj.matTime >= screenChartObj.matDuration) {
+        screenChartObj.materializing = false;
+        screenChartObj.revealUniforms.uMatrixActive.value = 0.0;
+      }
     }
 
     /**
@@ -2986,6 +3120,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       dynamicObjectsGroup = new THREE.Group();
       scene.add(dynamicObjectsGroup);
       pinnedGraphObj = buildPinnedGraphObject();
+      screenChartObj = buildScreenChartObject();
       rebuildBoxDimensions();
 
       // 6. Hệ thống ma trận chữ đổ dọc hội tụ & mưa nền nhẹ
@@ -3269,9 +3404,10 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       updateMatrixBursts(dt);
       if (bgRainSystem) bgRainSystem.update(t);
 
-      // Cập nhật vật thể động (sách/thẻ) & đồ thị 3D ghim cố định
+      // Cập nhật vật thể động (sách/thẻ) & đồ thị 3D / biểu đồ ép sát màn hình
       updateDynamicObjects(dt, t);
       updatePinnedGraph(dt, t);
+      updateScreenChart(dt);
 
       const targetPreset = EXPRESSION_PRESETS[state.currentExpr] || EXPRESSION_PRESETS.friendly;
       const exprLerp = Math.min(1, dt * 6.5);
@@ -3653,6 +3789,12 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       window.addEventListener('pointerup', finishDrag, { signal });
       window.addEventListener('pointercancel', finishDrag, { signal });
 
+      canvasEl.addEventListener('dblclick', () => {
+        if (screenChartObj?.visible) {
+          setScreenChart(null);
+        }
+      }, { signal });
+
       document.addEventListener('mouseleave', () => {
         if (!draggedObj) {
           state.pointerX = 0;
@@ -3782,6 +3924,10 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         resizeObserver = null;
       }
       abort.abort();
+      if (screenChartObj?.texture) {
+        screenChartObj.texture.dispose();
+        screenChartObj = null;
+      }
       if (renderer) {
         const el = renderer.domElement;
         renderer.dispose();
@@ -3802,6 +3948,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       replayMatrix: triggerMatrixEmergence,
       spawnBook: spawnPlanarBook,
       spawnNoteCard: spawnPlanarNoteCard,
+      setScreenChart,
       setPinnedGraph: (visible, mode) => {
         if (mode) setPinnedGraphMode(mode);
         setPinnedGraphVisible(visible);

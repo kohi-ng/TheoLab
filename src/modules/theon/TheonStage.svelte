@@ -163,9 +163,9 @@
             dockStore.openApp(appId, { title: opts?.title, url: opts?.url });
             return true;
           },
-          onShowGraph: (visible, mode) => {
+          onDrawChart: (spec) => {
             if (seq !== requestSeq) return;
-            controller?.setPinnedGraph(visible, mode);
+            controller?.setScreenChart(spec);
           },
           onClearObjects: () => {
             if (seq !== requestSeq) return;
