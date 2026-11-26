@@ -1,0 +1,298 @@
+<!-- Canvas WebGL 3D toàn màn hình -->
+  <div id="canvas-container" aria-label="Không gian hộp kính 3D nền đen viền xanh lam với đầu điêu khắc mảng phẳng Asaro của Theon"></div>
+  <div id="screen-frame" aria-hidden="true"></div>
+
+  <!-- Góc trên trái: Nhãn THEON // PLANAR AI + Nút thao tác nhanh -->
+  <div id="top-left-bar">
+    <header id="brand-badge" class="glass-surface">
+      <span id="status-dot" class="status-pulse"></span>
+      <div style="min-width: 0;">
+        <div class="brand-title-row">
+          <h1 class="brand-title">THEON // PLANAR AI</h1>
+          <span id="plane-badge" class="brand-chip">ASARO PLANAR</span>
+        </div>
+        <div id="status-subline">Đang tái tạo từ ma trận chữ dọc...</div>
+      </div>
+    </header>
+
+    <div id="quick-pills" role="toolbar" aria-label="Thao tác nhanh">
+      <button id="btn-quick-book" class="btn-pill glass-surface" title="Sinh khối sách từ ma trận chữ (Phím 1)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>+ Sách [1]</span>
+      </button>
+
+      <button id="btn-quick-card" class="btn-pill glass-surface" title="Sinh thẻ ghi chú từ ma trận chữ (Phím 2)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <line x1="7" y1="9" x2="17" y2="9"></line>
+          <line x1="7" y1="13" x2="13" y2="13"></line>
+        </svg>
+        <span>+ Thẻ [2]</span>
+      </button>
+
+      <button id="btn-quick-graph" class="btn-pill glass-surface" title="Bật/tắt đồ thị 3D ghim trước mặt Theon (Phím 3)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span>Đồ thị [3]</span>
+      </button>
+
+      <button id="btn-quick-clear" class="btn-pill glass-surface" title="Dọn sạch sách và thẻ ghi chú (Phím X)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+        </svg>
+        <span>Dọn [X]</span>
+      </button>
+
+      <span class="pill-sep" aria-hidden="true"></span>
+
+      <button id="btn-eye-closeup" class="btn-pill glass-surface" title="Phóng cận cảnh đôi mắt Theon (Phím Z)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+        <span id="label-closeup">Cận mắt [Z]</span>
+      </button>
+
+      <button id="btn-matrix-replay" class="btn-pill glass-surface" title="Chạy lại hiệu ứng ma trận chữ đổ dọc hội tụ thành Theon (Phím M)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+        <span>Ma trận [M]</span>
+      </button>
+
+      <button id="btn-toggle-hud" class="btn-pill glass-surface" aria-expanded="true" aria-controls="hud-panel" title="Ẩn hoặc hiện bảng điều khiển (Phím H)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6"></line>
+          <line x1="4" y1="12" x2="20" y2="12"></line>
+          <line x1="4" y1="18" x2="20" y2="18"></line>
+        </svg>
+        <span id="toggle-hud-label">Ẩn HUD [H]</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Bảng điều khiển HUD kính mờ tối bên phải -->
+  <aside id="hud-panel" class="glass-surface" aria-label="Bảng điều khiển Theon">
+    <div class="hud-header">
+      <span class="hud-header-title">Điều khiển Theon</span>
+      <span id="hud-fps" class="hud-fps">60 FPS</span>
+    </div>
+
+    <!-- 1. Sinh vật thể Ma trận (Sách, Thẻ ghi chú, Đồ thị ghim) -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Sinh vật thể Ma trận</span>
+        <span id="obj-count-tag" class="mini-tag">0 / 10 VẬT</span>
+      </div>
+      <div class="grid-2" role="group" aria-label="Sinh khối sách và thẻ ghi chú">
+        <button id="btn-hud-book" class="btn-opt">+ Khối sách [1]</button>
+        <button id="btn-hud-card" class="btn-opt">+ Thẻ ghi chú [2]</button>
+        <button id="btn-hud-graph" class="btn-opt">Đồ thị 3D [3]</button>
+        <button id="btn-hud-clear" class="btn-opt danger">Dọn vật thể [X]</button>
+      </div>
+
+      <div style="margin-top: 8px;">
+        <div class="slider-top" style="margin-bottom: 5px;">
+          <span class="slider-name">Kiểu đồ thị ghim</span>
+          <span id="graph-mode-tag" class="slider-val">Sóng hàm</span>
+        </div>
+        <div class="grid-3" role="group" aria-label="Chọn kiểu đồ thị 3D">
+          <button data-graph="wave" data-label="Sóng hàm" class="btn-opt graph-mode-btn active">Sóng hàm</button>
+          <button data-graph="bars" data-label="Biểu đồ cột" class="btn-opt graph-mode-btn">Cột 3D</button>
+          <button data-graph="orbit" data-label="Quỹ đạo" class="btn-opt graph-mode-btn">Quỹ đạo</button>
+        </div>
+      </div>
+
+      <div class="switch-row">
+        <div>
+          <div class="switch-title">Tự động sinh vật thể</div>
+          <div class="switch-desc">Định kỳ tạo sách/thẻ lơ lửng (kéo nhặt tự do)</div>
+        </div>
+        <button id="sw-auto-spawn" class="toggle-switch" role="switch" aria-checked="false" aria-label="Bật tắt tự động sinh vật thể"></button>
+      </div>
+    </div>
+
+    <!-- 2. Chế độ hoạt động -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Chế độ hoạt động</span>
+        <span id="mode-indicator" class="mini-tag">ĐỌC TÀI LIỆU</span>
+      </div>
+      <div class="grid-2" role="group" aria-label="Chọn chế độ hoạt động">
+        <button data-mode="reading" class="btn-opt mode-btn active">Đọc tài liệu</button>
+        <button data-mode="mouse" class="btn-opt mode-btn">Tương tác chuột</button>
+      </div>
+    </div>
+
+    <!-- 3. Hệ thống 7 biểu cảm khuôn mặt -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Biểu cảm khuôn mặt</span>
+        <span id="expr-indicator" class="mini-tag">THÂN THIỆN</span>
+      </div>
+      <div class="expr-grid" role="group" aria-label="Chọn 7 biểu cảm của Theon">
+        <button data-expr="friendly" class="btn-opt expr-btn active">Thân thiện</button>
+        <button data-expr="focused" class="btn-opt expr-btn">Tập trung</button>
+        <button data-expr="thoughtful" class="btn-opt expr-btn">Suy tư</button>
+        <button data-expr="surprised" class="btn-opt expr-btn">Ngạc nhiên</button>
+        <button data-expr="happy" class="btn-opt expr-btn">Vui vẻ</button>
+        <button data-expr="serious" class="btn-opt expr-btn">Nghiêm túc</button>
+        <button data-expr="relaxed" class="btn-opt expr-btn">Thư giãn</button>
+      </div>
+      <div class="switch-row">
+        <div>
+          <div class="switch-title">Biểu cảm tự động theo văn bản</div>
+          <div class="switch-desc">Đổi sắc thái theo dấu câu (!, ?) &amp; nội dung</div>
+        </div>
+        <button id="sw-auto-expr" class="toggle-switch on" role="switch" aria-checked="true" aria-label="Bật tắt biểu cảm tự động theo văn bản"></button>
+      </div>
+    </div>
+
+    <!-- 4. Tài liệu cho Theon đọc -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Tài liệu cho Theon đọc</span>
+        <span id="doc-line-tag" class="mini-tag">DÒNG 01</span>
+      </div>
+      <div class="grid-3" role="group" aria-label="Chọn tài liệu mẫu">
+        <button data-doc="0" class="btn-opt doc-btn active" title="Kiến trúc Nhận thức Theon">Kiến trúc</button>
+        <button data-doc="1" class="btn-opt doc-btn" title="Mật mã &amp; Thuật toán">Thuật toán</button>
+        <button data-doc="2" class="btn-opt doc-btn" title="Ghi chú Dự án">Ghi chú</button>
+      </div>
+      <button id="btn-open-custom" class="btn-full-custom">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"></path>
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+        </svg>
+        <span>Nhập văn bản riêng</span>
+      </button>
+
+      <div class="slider-group">
+        <div class="slider-top">
+          <span class="slider-name">Tốc độ đọc</span>
+          <span id="val-speed" class="slider-val">1.0x</span>
+        </div>
+        <input id="slider-speed" type="range" min="0.5" max="2.5" step="0.1" value="1.0" class="theon-slider" />
+      </div>
+    </div>
+
+    <!-- 5. Hiển thị khối Planar -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Hiển thị khối Planar</span>
+      </div>
+      <div class="grid-2" role="group" aria-label="Chọn kiểu hiển thị khối Asaro">
+        <button data-head="planar" class="btn-opt head-btn active">Mặt phẳng + Viền cạnh</button>
+        <button data-head="sculpture" class="btn-opt head-btn">Thuần khối Asaro</button>
+        <button data-head="translucent" class="btn-opt head-btn">Xuyên thấu</button>
+        <button data-head="triwire" class="btn-opt head-btn">Lưới tam giác</button>
+      </div>
+    </div>
+
+    <!-- 6. Không gian & Hiệu ứng -->
+    <div class="hud-section">
+      <div class="section-head">
+        <span class="section-label">Không gian &amp; Hiệu ứng</span>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-top">
+          <span class="slider-name">Độ sáng viền</span>
+          <span id="val-edge" class="slider-val">0.72</span>
+        </div>
+        <input id="slider-edge" type="range" min="0.10" max="1.00" step="0.02" value="0.72" class="theon-slider" />
+      </div>
+
+      <div class="switch-row">
+        <div>
+          <div class="switch-title">Mưa ma trận nền</div>
+          <div class="switch-desc">Ký tự xanh lam rơi nhẹ ở góc sâu hộp</div>
+        </div>
+        <button id="sw-bg-rain" class="toggle-switch on" role="switch" aria-checked="true" aria-label="Bật tắt mưa ma trận nền"></button>
+      </div>
+
+      <div class="switch-row">
+        <div>
+          <div class="switch-title">Parallax chuột</div>
+          <div class="switch-desc">Nghiêng chiều sâu hộp 3D theo con trỏ</div>
+        </div>
+        <button id="sw-parallax" class="toggle-switch on" role="switch" aria-checked="true" aria-label="Bật tắt Parallax chuột"></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Thanh phụ đề tinh tế cạnh dưới -->
+  <div id="caption-bar-wrap">
+    <div id="caption-bar" class="glass-surface">
+      <span id="caption-expr-pill" class="caption-expr-pill">THÂN THIỆN</span>
+      <div id="caption-text">Khởi tạo ma trận ký tự — đang kết tinh khối điêu khắc phẳng Theon...</div>
+      <button id="btn-hide-caption" class="btn-icon-close" title="Ẩn thanh phụ đề">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <button id="btn-restore-caption" class="glass-surface">
+    <span>Hiện phụ đề đọc</span>
+  </button>
+
+  <!-- Modal Nhập văn bản riêng -->
+  <div id="custom-modal" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+    <div class="modal-card glass-surface">
+      <div class="modal-head">
+        <div>
+          <h2 id="modal-heading" class="modal-title">Nhập văn bản / mã nguồn cho Theon đọc</h2>
+          <p class="modal-sub">
+            Văn bản bạn nhập sẽ hiển thị trên màn hình ảo và phản chiếu sắc nét ngay trên đôi mắt kính của Theon.
+          </p>
+        </div>
+        <button id="btn-close-modal" class="btn-icon-close" aria-label="Đóng hộp thoại">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <input
+        id="custom-title"
+        type="text"
+        maxlength="44"
+        class="modal-field"
+        placeholder="Tiêu đề tài liệu (vd: GHI_CHU_THEON.md)"
+      />
+      <textarea
+        id="custom-body"
+        class="modal-field"
+        placeholder="Dán bất kỳ đoạn văn tiếng Việt hoặc mã nguồn nào tại đây..."
+      ></textarea>
+
+      <div id="modal-hint">
+        Mẹo: Thêm dấu ? (Suy tư), dấu ! (Ngạc nhiên / Vui vẻ) hoặc mã nguồn kỹ thuật (Tập trung) để thấy Theon đổi sắc thái tự động!
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-cancel-modal" class="btn-modal-cancel">Hủy</button>
+        <button id="btn-apply-modal" class="btn-modal-apply">Cho Theon đọc ngay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Màn hình lỗi dự phòng WebGL -->
+  <div id="webgl-error">
+    <div class="modal-card glass-surface" style="text-align: center; max-width: 420px;">
+      <h2 class="modal-title" style="color: var(--accent-soft);">Không thể khởi tạo WebGL 3D</h2>
+      <p id="webgl-error-msg" class="modal-sub" style="margin-top: 8px;">
+        Trình duyệt chưa bật WebGL hoặc không hỗ trợ tăng tốc phần cứng.
+      </p>
+    </div>
+  </div>
