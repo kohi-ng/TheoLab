@@ -112,10 +112,9 @@ registerNavigationTabs(NAV_TABS);
 app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
-      <button class="icon-button menu-icon" aria-label="Mở menu" data-action="drawer">=</button>
+      <button class="icon-button menu-button" aria-label="Mở menu" data-action="drawer">☰</button>
       <h1 class="topbar-title" id="current-title">TheoLab</h1>
       <div class="topbar-actions">
-        <button class="quick-button" data-action="palette" title="Tìm kiếm ngữ nghĩa & từ khóa (Ctrl+K)">⌘K Tìm</button>
         <button class="quick-button" data-action="formula">✦ Công thức</button>
         <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
       </div>
@@ -135,17 +134,30 @@ app.innerHTML = `
   </div>
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="Điều hướng">
-    <div class="drawer-header"><span class="brand">TheoLab</span><button class="icon-button" data-action="drawer" aria-label="Đóng menu">×</button></div>
-    <nav class="tab-list" aria-label="Khu vực chính">
-      <div class="primary-navigation" id="primary-navigation"></div>
-      <div class="overflow-navigation" id="overflow-navigation">
-        <button class="nav-tab overflow-toggle" type="button" aria-expanded="false" data-action="toggle-overflow">
-          <span class="nav-icon" aria-hidden="true">⋯</span><span class="nav-label">Thêm</span>
-        </button>
-        <div class="overflow-panel" id="overflow-panel"><div class="overflow-panel-inner" id="overflow-tabs"></div></div>
-      </div>
-    </nav>
-    <div class="drawer-view" id="drawer-view"></div>
+    <div class="drawer-header">
+      <span class="brand"><span class="sparkle" aria-hidden="true">✦</span><span class="brand-name">TheoLab</span></span>
+      <button class="icon-button search-button" data-action="palette" aria-label="Tìm kiếm" title="Tìm kiếm (Ctrl+K)">⌕</button>
+      <button class="icon-button" data-action="drawer" aria-label="Thu gọn hoặc đóng menu" title="Thu gọn / mở menu">◧</button>
+    </div>
+    <button class="nav-tab new-chat" type="button" data-action="new-session" title="Phiên chat mới">
+      <span class="nav-icon" aria-hidden="true">✎</span><span class="nav-label">Phiên chat mới</span>
+    </button>
+    <div class="drawer-scroll">
+      <nav class="tab-list" aria-label="Khu vực chính">
+        <div class="primary-navigation" id="primary-navigation"></div>
+        <div class="overflow-navigation" id="overflow-navigation">
+          <button class="nav-tab overflow-toggle" type="button" aria-expanded="false" data-action="toggle-overflow" title="Thêm">
+            <span class="nav-icon" aria-hidden="true">⋯</span><span class="nav-label">Thêm</span>
+          </button>
+          <div class="overflow-panel" id="overflow-panel"><div class="overflow-panel-inner" id="overflow-tabs"></div></div>
+        </div>
+      </nav>
+      <div class="drawer-view" id="drawer-view"></div>
+    </div>
+    <div class="drawer-footer">
+      <span class="avatar" aria-hidden="true">T</span><span class="footer-name">Không gian của tôi</span>
+      <button class="icon-button" data-action="open-settings" aria-label="Mở cấu hình" title="Cấu hình">⚙</button>
+    </div>
   </aside>
   <div id="toast" class="toast hidden" role="status"></div>
 `;
@@ -162,6 +174,15 @@ function toast(message) {
   node.textContent = message;
   node.classList.remove('hidden');
   window.setTimeout(() => node.classList.add('hidden'), 3600);
+}
+
+const mobileLayout = window.matchMedia('(max-width: 800px)');
+
+// Desktop: the sidebar is persistent and the menu button collapses it to a rail.
+// Mobile: the same element is an overlay drawer.
+function toggleSidebar() {
+  if (mobileLayout.matches) setDrawer(!drawerOpen);
+  else document.body.classList.toggle('sidebar-collapsed');
 }
 
 function setDrawer(open) {
@@ -188,6 +209,7 @@ function renderNavigation() {
     button.type = 'button';
     button.className = `nav-tab${selectedTab === tab.label ? ' selected' : ''}`;
     button.dataset.navId = tab.id;
+    button.title = tab.label;
     button.setAttribute('aria-current', selectedTab === tab.label ? 'page' : 'false');
     const icon = document.createElement('span');
     icon.className = 'nav-icon';
@@ -314,7 +336,7 @@ function upsertSession(session) {
   if (index >= 0) sessions[index] = session;
   else sessions.unshift(session);
   sessions.sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
-  if (selectedTab === 'AI' && drawerOpen) renderDrawerView();
+  if (selectedTab === 'AI') renderDrawerView();
 }
 
 function renderFullMessages() {
@@ -417,6 +439,7 @@ async function openSession(session) {
   selectedTab = 'AI';
   updateContext({ activeTab: 'AI', libraryContext: currentSession.preferences.libraryContext ?? null });
   renderAIWorkspace();
+  renderDrawerView();
   setDrawer(false);
   document.querySelector('#current-title').textContent = 'TheoLab AI';
 }
@@ -451,14 +474,7 @@ function renderSessionList() {
   const heading = document.createElement('h2');
   heading.className = 'drawer-section-title';
   heading.textContent = 'Lịch sử phiên chat';
-  const create = document.createElement('button');
-  create.className = 'new-session-button';
-  create.textContent = '+ Phiên chat mới';
-  create.addEventListener('click', async () => {
-    await createSession();
-    setDrawer(false);
-  });
-  drawerView.append(create, heading);
+  drawerView.append(heading);
   if (!sessions.length) {
     const empty = document.createElement('p');
     empty.className = 'status-line';
@@ -1070,11 +1086,14 @@ function handleTab(tab) {
 
 document.addEventListener('click', (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
-  if (action === 'drawer') setDrawer(!drawerOpen);
+  if (action === 'drawer') toggleSidebar();
+  if (action === 'open-settings') window.dispatchEvent(new CustomEvent('theolab:open-settings'));
   if (action === 'chat') setQuickChat(!quickChatOpen);
   if (action === 'formula') showFormulas();
   if (action === 'palette') window.dispatchEvent(new CustomEvent('theolab:open-palette'));
-  if (action === 'new-session') createSession().catch((error) => toast(error.message));
+  if (action === 'new-session') {
+    createSession().then(() => setDrawer(false)).catch((error) => toast(error.message));
+  }
   if (action === 'toggle-overflow') {
     overflowExpanded = !overflowExpanded;
     renderNavigation();

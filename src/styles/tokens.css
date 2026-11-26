@@ -1,6 +1,6 @@
 :root {
-  --bg-canvas: linear-gradient(180deg, #FFFFFF 0%, #F8FAFD 55%, #F3F6FC 100%);
-  --surface-drawer: #F0F4F9;
+  --bg-canvas: #F8FAFD;
+  --surface-drawer: #FFFFFF;
   --surface-card: #F0F4F9;
   --surface-elevated: #E9EEF6;
   --surface-hover: #DFE6F2;
