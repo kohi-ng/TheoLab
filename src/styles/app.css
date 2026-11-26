@@ -181,25 +181,29 @@ details summary { cursor: pointer; color: var(--text-primary); font-weight: 600;
 body.sidebar-collapsed { --sidebar-width: 72px; }
 body.dock-resizing { user-select: none; cursor: col-resize; }
 body.dock-resizing iframe { pointer-events: none; }
-.app-shell { margin-left: var(--sidebar-width); transition: margin-left .2s ease; }
-.topbar { position: sticky; top: 0; z-index: 10; height: var(--topbar-height); display: flex; align-items: center; gap: 12px; padding: 0 20px; background: rgb(248 250 253 / 92%); }
+.app-shell { min-height: 100dvh; display: flex; flex-direction: row; margin-left: var(--sidebar-width); transition: margin-left .2s ease; }
+.left-workspace { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 100dvh; }
+.topbar { position: sticky; top: 0; z-index: 10; height: var(--topbar-height); display: flex; align-items: center; gap: 10px; padding: 0 20px; background: rgb(248 250 253 / 92%); }
 .topbar-title { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .menu-button { display: none; }
 .app-main { display: flex; flex: 1; min-height: calc(100dvh - var(--topbar-height)); padding: 0 20px 20px; gap: 16px; }
 .chat-pane { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); }
 
-/* Right-pane Multi-Tab Workspace Dock & Resizable Split-Pane */
-.app-main.dock-open { gap: 4px; }
-.app-main.dock-open .content-pane { flex: 0 0 var(--split-left, 50%); min-width: 260px; transition: none; }
-.app-main.dock-open .page-content { padding-inline: 16px; }
-.app-main.dock-open.dock-expanded .content-pane { display: none; }
-.app-main.dock-open.chat-with-dock .content-pane { display: none; }
-.app-main.dock-open.chat-with-dock .chat-pane { flex: 0 0 var(--split-left, 40%); min-width: 280px; }
-.dock-splitter { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); flex: 0 0 10px; display: grid; place-items: center; cursor: col-resize; touch-action: none; border-radius: 999px; }
+/* Right-pane Multi-Tab Workspace Dock: full viewport height, flush edge-to-edge */
+.app-shell.dock-open .left-workspace { flex: 0 0 var(--split-left, 50%); min-width: 280px; }
+.app-shell.dock-open .topbar { padding: 0 12px; gap: 8px; }
+.app-shell.dock-open .topbar-actions { gap: 4px; }
+.app-shell.dock-open .quick-button { padding: 8px 11px; font-size: 12px; white-space: nowrap; }
+.app-shell.dock-open .app-main { padding: 0 10px 16px; }
+.app-shell.dock-open .page-content { padding-inline: 10px; }
+.app-shell.dock-expanded .left-workspace { display: none; }
+.app-main.chat-with-dock .content-pane { display: none; }
+.app-main.chat-with-dock .chat-pane { flex: 1 1 auto; min-width: 0; }
+.dock-splitter { position: sticky; top: 0; height: 100dvh; flex: 0 0 8px; display: grid; place-items: center; cursor: col-resize; touch-action: none; background: var(--bg-canvas); }
 .dock-splitter::before { content: ""; width: 4px; height: 42px; border-radius: 999px; background: transparent; transition: background .16s ease, height .16s ease; }
 .dock-splitter:hover::before, .dock-splitter:focus-visible::before, body.dock-resizing .dock-splitter::before { background: #b8c6dc; height: 64px; }
-.dock-pane { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); flex: 1 1 0; min-width: 300px; display: flex; flex-direction: column; animation: slide-in .2s ease; }
+.dock-pane { position: sticky; top: 0; height: 100dvh; flex: 1 1 0; min-width: 300px; display: flex; flex-direction: column; animation: slide-in .2s ease; }
 .library-dock-btn { min-width: 34px; width: 34px; height: 34px; padding: 0; font-size: 16px; color: var(--text-muted); }
 .library-dock-btn:hover { color: var(--accent-solid); }
 
@@ -234,10 +238,10 @@ body.dock-resizing iframe { pointer-events: none; }
   .quick-button { padding: 10px; font-size: 12px; }
   .page-content { padding: 18px 10px 40px; }
   .chat-open .content-pane { flex: 1; }
-  .chat-pane { position: fixed; z-index: 16; inset: auto 0 0; height: min(82vh, 760px); border-radius: 24px 24px 0 0; transform: translateY(105%); transition: transform .28s ease; box-shadow: var(--shadow-float); }
+  .chat-pane { position: fixed; z-index: 18; inset: auto 0 0; height: min(82vh, 760px); border-radius: 24px 24px 0 0; transform: translateY(105%); transition: transform .28s ease; box-shadow: var(--shadow-float); }
   .chat-pane.mobile-open { transform: translateY(0); }
   .dock-splitter { display: none !important; }
-  .dock-pane { position: fixed; z-index: 14; inset: var(--topbar-height) 0 0; height: calc(100dvh - var(--topbar-height)); min-width: 0; padding: 0 6px 6px; background: var(--bg-canvas); }
+  .dock-pane { position: fixed; z-index: 15; inset: 0; height: 100dvh; min-width: 0; padding: 0; background: var(--surface-card); }
   .mobile-grabber { display: block; width: 42px; height: 5px; background: #c4ccda; border-radius: 8px; margin: 10px auto 0; }
   .chat-header { padding-top: 10px; }
   .studio-layout { grid-template-columns: 1fr; }
@@ -259,7 +263,7 @@ body.dock-resizing iframe { pointer-events: none; }
   .composer-host { padding: 0 8px 8px; }
   .composer-popover { width: min(360px, calc(100vw - 32px)); max-height: 58dvh; }
   .context-chip { max-width: 75vw; overflow: hidden; text-overflow: ellipsis; }
-  .app-shell { margin-left: 0; }
+  .app-shell { margin-left: 0; flex-direction: column; }
   :root, body.sidebar-collapsed { --sidebar-width: min(320px, 88vw); }
   .topbar { padding: 0 8px; gap: 6px; }
   .topbar-title { font-size: 13px; }

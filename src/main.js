@@ -135,30 +135,32 @@ registerModule('vectorKb', () => import('./modules/kb/mountKb.ts'));
 registerNavigationTabs(NAV_TABS);
 
 app.innerHTML = `
-  <div class="app-shell">
-    <header class="topbar">
-      <button class="icon-button menu-button" aria-label="Mở menu" data-action="drawer">☰</button>
-      <h1 class="topbar-title" id="current-title">TheoLab</h1>
-      <div class="topbar-actions">
-        <button class="quick-button" data-action="dock" id="dock-toggle-btn" aria-pressed="false" title="Đóng / mở khung ứng dụng chia tab">◫ Ứng dụng</button>
-        <button class="quick-button" data-action="formula">✦ Công thức</button>
-        <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
-      </div>
-    </header>
-    <main class="app-main" id="app-main">
-      <section class="content-pane"><div class="page-content" id="page-content"></div></section>
-      <aside class="chat-pane hidden" id="chat-pane" aria-label="Chat nhanh với Agent">
-        <div class="mobile-grabber"></div>
-        <div class="chat-header">
-          <div class="chat-heading"><span class="sparkle">✦</span> Agent học tập</div>
-          <button class="icon-button" data-action="chat" aria-label="Đóng chat">×</button>
+  <div class="app-shell" id="app-shell">
+    <div class="left-workspace" id="left-workspace">
+      <header class="topbar">
+        <button class="icon-button menu-button" aria-label="Mở menu" data-action="drawer">☰</button>
+        <h1 class="topbar-title" id="current-title">TheoLab</h1>
+        <div class="topbar-actions">
+          <button class="quick-button" data-action="dock" id="dock-toggle-btn" aria-pressed="false" title="Đóng / mở khung ứng dụng chia tab">◫ Ứng dụng</button>
+          <button class="quick-button" data-action="formula">✦ Công thức</button>
+          <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
         </div>
-        <div class="chat-messages" id="quick-messages"></div>
-        <div class="composer-host" id="quick-composer"></div>
-      </aside>
-      <div class="dock-splitter hidden" id="dock-splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để thay đổi tỷ lệ chia khung" tabindex="0"></div>
-      <section class="dock-pane hidden" id="dock-pane" aria-label="Không gian ứng dụng chia tab"></section>
-    </main>
+      </header>
+      <main class="app-main" id="app-main">
+        <section class="content-pane"><div class="page-content" id="page-content"></div></section>
+        <aside class="chat-pane hidden" id="chat-pane" aria-label="Chat nhanh với Agent">
+          <div class="mobile-grabber"></div>
+          <div class="chat-header">
+            <div class="chat-heading"><span class="sparkle">✦</span> Agent học tập</div>
+            <button class="icon-button" data-action="chat" aria-label="Đóng chat">×</button>
+          </div>
+          <div class="chat-messages" id="quick-messages"></div>
+          <div class="composer-host" id="quick-composer"></div>
+        </aside>
+      </main>
+    </div>
+    <div class="dock-splitter hidden" id="dock-splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để thay đổi tỷ lệ chia khung" tabindex="0"></div>
+    <section class="dock-pane hidden" id="dock-pane" aria-label="Không gian ứng dụng chia tab"></section>
   </div>
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="Điều hướng">
@@ -192,7 +194,7 @@ app.innerHTML = `
 
 const page = document.querySelector('#page-content');
 const appMain = document.querySelector('#app-main');
-const appShell = document.querySelector('.app-shell');
+const appShell = document.querySelector('#app-shell');
 const drawer = document.querySelector('#drawer');
 const backdrop = document.querySelector('#drawer-backdrop');
 const drawerView = document.querySelector('#drawer-view');
@@ -219,12 +221,12 @@ function syncWorkspaceLayout() {
   const chatOnly = !dockOpen && quickChatOpen && !mobile && workspace !== 'ai';
   const showSplitter = dockOpen && !mobile && (!dockExpanded || quickChatOpen);
 
-  appMain.style.setProperty('--split-left', `${(dockLayout.splitRatio * 100).toFixed(2)}%`);
+  appShell.style.setProperty('--split-left', `${(dockLayout.splitRatio * 100).toFixed(2)}%`);
+  appShell.classList.toggle('dock-open', dockOpen && !mobile);
+  appShell.classList.toggle('dock-expanded', dockExpanded && !quickChatOpen && !mobile);
   appMain.classList.toggle('dock-open', dockOpen && !mobile);
-  appMain.classList.toggle('dock-expanded', dockExpanded && !quickChatOpen && !mobile);
   appMain.classList.toggle('chat-with-dock', chatWithDock);
   appMain.classList.toggle('chat-open', chatOnly);
-  appShell.classList.toggle('dock-expanded', dockExpanded);
 
   dockPane.classList.toggle('hidden', !dockOpen);
   dockPane.classList.toggle('mobile-open', dockOpen && mobile);
@@ -250,7 +252,7 @@ function initDockSplitter() {
   let activePointerId = null;
 
   const updateFromClientX = (clientX) => {
-    const rect = appMain.getBoundingClientRect();
+    const rect = appShell.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = (clientX - rect.left) / rect.width;
     dockStore.setSplitRatio(ratio);
@@ -1344,7 +1346,12 @@ window.addEventListener('theolab:navigate-deep-link', async (event) => {
 
 async function start() {
   unmountDock?.();
-  unmountDock = mountWorkspaceDock(dockPane, { onToast: toast });
+  unmountDock = mountWorkspaceDock(dockPane, {
+    onToast: toast,
+    onToggleChat: () => {
+      if (requireData()) setQuickChat(!quickChatOpen);
+    },
+  });
   initDockSplitter();
   onDockLayoutChange((snapshot) => {
     dockLayout = snapshot;

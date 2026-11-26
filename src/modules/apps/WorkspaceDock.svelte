@@ -11,14 +11,21 @@
   } from './appCatalog';
   import { dockStore } from './dockStore.svelte';
   import { saveOwnerVault } from '../../core/secretsVault';
+  import { createGoogleWorkspaceFile, type NewGoogleFileKind } from '../../core/googleDriveApi';
 
-  let { onToast }: { onToast?: (message: string) => void } = $props();
+  let {
+    onToast,
+    onToggleChat,
+  }: { onToast?: (message: string) => void; onToggleChat?: () => void } = $props();
 
   // Launcher popover state ("+" button)
   let launcherUrl = $state('');
   let launcherTitle = $state('');
 
   // In-tab setup form states keyed by tabId
+  let newFileTitleDrafts = $state<Record<string, string>>({});
+  let creatingTabId = $state<string | null>(null);
+  let createErrorByTab = $state<Record<string, string>>({});
   let googleUrlDrafts = $state<Record<string, string>>({});
   let googleTitleDrafts = $state<Record<string, string>>({});
   let googleModeDrafts = $state<Record<string, GoogleEmbedMode>>({});
@@ -42,7 +49,7 @@
   function matchingLibraryDocs(kind: 'google-doc' | 'google-sheet'): LibraryDockInput[] {
     const wantedService = kind === 'google-sheet' ? 'spreadsheets' : 'document';
     return dockStore.libraryItems.filter((item) => {
-      if (item.type !== 'google' || !item.url) return false;
+      if (item.type !== 'google' || !item.url || item.url.includes('REPLACE_')) return false;
       const service = detectGoogleService(item.url);
       if (service === wantedService) return true;
       return service === 'drive';
@@ -55,6 +62,42 @@
         || item.type === 'pdf'
         || item.type === 'widget',
     );
+  }
+
+  async function handleCreateNewGoogleFile(tab: DockTab, kind: NewGoogleFileKind) {
+    if (creatingTabId) return;
+    creatingTabId = tab.id;
+    createErrorByTab = { ...createErrorByTab, [tab.id]: '' };
+    try {
+      const created = await createGoogleWorkspaceFile({
+        kind,
+        title: (newFileTitleDrafts[tab.id] ?? '').trim() || undefined,
+      });
+      dockStore.updateTabUrl(tab.id, created.url, {
+        title: created.name,
+        googleMode: 'edit',
+      });
+      newFileTitleDrafts = { ...newFileTitleDrafts, [tab.id]: '' };
+      try {
+        await dockStore.saveToLibrary(created.name, created.url);
+        onToast?.(`Đã tạo "${created.name}" trên Google Drive và lưu vào Thư viện.`);
+      } catch {
+        onToast?.(`Đã tạo và mở "${created.name}" trong tab.`);
+      }
+    } catch (error) {
+      const msg = (error as Error).message;
+      createErrorByTab = { ...createErrorByTab, [tab.id]: msg };
+      onToast?.(msg);
+    } finally {
+      creatingTabId = null;
+    }
+  }
+
+  async function handleQuickNewGoogleTab(kind: NewGoogleFileKind) {
+    const appId = kind === 'spreadsheets' ? 'google-sheets' : 'google-docs';
+    const createdTab = dockStore.openApp(appId, { forceNew: true });
+    if (!createdTab) return;
+    await handleCreateNewGoogleFile(createdTab, kind);
   }
 
   async function handleGoogleTabSubmit(event: SubmitEvent, tab: DockTab) {
@@ -178,6 +221,18 @@
       >
         +
       </button>
+      {#if onToggleChat}
+        <button
+          type="button"
+          class="dock-ctrl-btn dock-chat-btn"
+          class:visible={dockStore.expanded}
+          aria-label="Mở Chat nhanh cạnh ứng dụng"
+          title="Mở Chat nhanh cạnh ứng dụng"
+          onclick={() => onToggleChat?.()}
+        >
+          ✧
+        </button>
+      {/if}
       <button
         type="button"
         class="dock-ctrl-btn"
@@ -305,6 +360,17 @@
           </div>
         {/if}
 
+        {#if activeApp && (activeApp.kind === 'google-doc' || activeApp.kind === 'google-sheet')}
+          <button
+            type="button"
+            class="dock-sub-btn"
+            disabled={creatingTabId !== null}
+            onclick={() => handleQuickNewGoogleTab(activeApp.kind === 'google-sheet' ? 'spreadsheets' : 'document')}
+          >
+            ＋ File mới
+          </button>
+        {/if}
+
         {#if activeApp && (activeApp.kind === 'google-doc' || activeApp.kind === 'google-sheet' || activeApp.kind === 'google-calendar')}
           <button
             type="button"
@@ -371,19 +437,66 @@
         >
           {#if !tab.url && app && (app.kind === 'google-doc' || app.kind === 'google-sheet')}
             {@const libDocs = matchingLibraryDocs(app.kind)}
+            {@const fileKind = app.kind === 'google-sheet' ? 'spreadsheets' : 'document'}
+            {@const isCreating = creatingTabId === tab.id}
             <div class="dock-setup">
               <div class="dock-setup-card">
                 <div class="dock-setup-header">
                   <span class="dock-setup-icon" aria-hidden="true">{app.icon}</span>
                   <div>
                     <h3>{app.name}</h3>
-                    <p>Mở từ Thư viện hoặc dán liên kết tài liệu để nhúng trực tiếp vào tab này.</p>
+                    <p>Tạo file mới trực tiếp trong tab, chọn từ Thư viện hoặc dán liên kết có sẵn.</p>
                   </div>
                 </div>
 
+                <form
+                  class="dock-create-box"
+                  onsubmit={(e) => { e.preventDefault(); handleCreateNewGoogleFile(tab, fileKind); }}
+                >
+                  <div class="dock-launcher-label">Tạo file mới ngay trong tab này</div>
+                  <div class="dock-url-row">
+                    <input
+                      class="dock-input dock-input-white"
+                      type="text"
+                      placeholder={app.kind === 'google-sheet' ? 'Tên bảng tính mới (VD: Số liệu chuẩn độ)…' : 'Tên tài liệu mới (VD: Báo cáo bài 3)…'}
+                      value={newFileTitleDrafts[tab.id] ?? ''}
+                      oninput={(e) => {
+                        newFileTitleDrafts = {
+                          ...newFileTitleDrafts,
+                          [tab.id]: (e.currentTarget as HTMLInputElement).value,
+                        };
+                      }}
+                    />
+                    <button type="submit" class="dock-primary-btn" disabled={isCreating}>
+                      {isCreating ? 'Đang tạo…' : '＋ Tạo & mở'}
+                    </button>
+                  </div>
+                  {#if createErrorByTab[tab.id]}
+                    <p class="dock-error-note">{createErrorByTab[tab.id]}</p>
+                  {/if}
+                </form>
+
+                {#if libDocs.length > 0}
+                  <div class="dock-lib-pick">
+                    <div class="dock-launcher-label">Mở nhanh từ Thư viện của bạn</div>
+                    <div class="dock-lib-list">
+                      {#each libDocs as item (item.id)}
+                        <button
+                          type="button"
+                          class="dock-launcher-lib-item"
+                          onclick={() => openLibraryDocIntoTab(tab, item)}
+                        >
+                          <strong>{item.title}</strong>
+                          <small>{item.sourceLabel ?? 'Google Drive'}</small>
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
                 <form class="dock-setup-form" onsubmit={(e) => handleGoogleTabSubmit(e, tab)}>
                   <label class="dock-field-label" for={`gurl-${tab.id}`}>
-                    Liên kết {app.kind === 'google-sheet' ? 'Google Sheets' : 'Google Docs'}
+                    Hoặc dán liên kết {app.kind === 'google-sheet' ? 'Google Sheets' : 'Google Docs'} có sẵn
                   </label>
                   <input
                     id={`gurl-${tab.id}`}
@@ -399,14 +512,11 @@
                     }}
                   />
 
-                  <label class="dock-field-label" for={`gtitle-${tab.id}`}>
-                    Tên hiển thị trên tab (tùy chọn)
-                  </label>
                   <input
                     id={`gtitle-${tab.id}`}
                     class="dock-input"
                     type="text"
-                    placeholder={app.kind === 'google-sheet' ? 'VD: Số liệu chuẩn độ bài 3' : 'VD: Báo cáo thí nghiệm'}
+                    placeholder="Tên hiển thị trên tab (tùy chọn)"
                     value={googleTitleDrafts[tab.id] ?? ''}
                     oninput={(e) => {
                       googleTitleDrafts = { ...googleTitleDrafts, [tab.id]: (e.currentTarget as HTMLInputElement).value };
@@ -444,12 +554,12 @@
                           };
                         }}
                       />
-                      <span>Lưu luôn vào Thư viện</span>
+                      <span>Lưu vào Thư viện</span>
                     </label>
                   </div>
 
                   <div class="dock-setup-actions">
-                    <button type="submit" class="dock-primary-btn">Mở trong tab này</button>
+                    <button type="submit" class="dock-primary-btn">Mở liên kết này</button>
                     {#if app.externalCreateUrl}
                       <a
                         class="dock-sub-btn"
@@ -457,43 +567,11 @@
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Tạo file mới ↗
-                      </a>
-                    {/if}
-                    {#if app.externalHomeUrl}
-                      <a
-                        class="dock-sub-btn"
-                        href={app.externalHomeUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Mở trang {app.shortName} ↗
+                        Mở {app.kind === 'google-sheet' ? 'sheets.new' : 'docs.new'} ↗
                       </a>
                     {/if}
                   </div>
                 </form>
-
-                {#if libDocs.length > 0}
-                  <div class="dock-lib-pick">
-                    <div class="dock-launcher-label">Mở nhanh từ Thư viện của bạn</div>
-                    <div class="dock-lib-list">
-                      {#each libDocs as item (item.id)}
-                        <button
-                          type="button"
-                          class="dock-launcher-lib-item"
-                          onclick={() => openLibraryDocIntoTab(tab, item)}
-                        >
-                          <strong>{item.title}</strong>
-                          <small>{item.sourceLabel ?? 'Google Drive'}</small>
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-
-                <p class="dock-setup-note">
-                  Mẹo: Google chặn nhúng trang danh sách gốc, nên bạn mở từng file theo liên kết hoặc chọn từ Thư viện. Nếu trình duyệt chặn cookie bên thứ ba khi chỉnh sửa, bấm <strong>Mở ngoài ↗</strong> trên thanh công cụ.
-                </p>
               </div>
             </div>
           {:else if !tab.url && app?.kind === 'google-calendar'}
@@ -577,7 +655,7 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-    border-radius: 22px;
+    border-radius: 0;
     background: var(--surface-card);
     overflow: hidden;
   }
@@ -591,9 +669,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 10px 6px;
+    padding: 6px 10px 6px 8px;
     background: var(--surface-elevated);
-    min-height: 46px;
+    min-height: 44px;
     flex: 0 0 auto;
   }
 
@@ -617,7 +695,7 @@
     max-width: 190px;
     min-width: 82px;
     flex: 0 1 auto;
-    border-radius: 14px;
+    border-radius: 12px;
     background: transparent;
     color: var(--text-secondary);
     transition: background 0.16s ease, color 0.16s ease;
@@ -631,7 +709,7 @@
   .dock-tab.active {
     background: #fff;
     color: var(--text-primary);
-    box-shadow: 0 2px 8px rgb(31 48 78 / 6%);
+    box-shadow: 0 1px 6px rgb(31 48 78 / 6%);
   }
 
   .dock-tab-select {
@@ -642,7 +720,7 @@
     gap: 6px;
     border: 0;
     background: transparent;
-    padding: 7px 4px 7px 10px;
+    padding: 6px 4px 6px 10px;
     font-size: 12px;
     font-weight: 500;
     text-align: left;
@@ -708,6 +786,20 @@
   .dock-ctrl-btn.active {
     background: #d7e5fb;
     color: #174ea6;
+  }
+
+  .dock-chat-btn {
+    display: none;
+  }
+
+  .dock-chat-btn.visible {
+    display: grid;
+  }
+
+  @media (max-width: 800px) {
+    .dock-chat-btn {
+      display: grid;
+    }
   }
 
   .dock-launcher {
@@ -823,7 +915,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 6px 12px;
+    padding: 5px 10px;
     background: var(--surface-card);
     flex: 0 0 auto;
     flex-wrap: wrap;
@@ -865,7 +957,7 @@
   .dock-mode-pills {
     display: inline-flex;
     gap: 2px;
-    padding: 3px;
+    padding: 2px;
     border-radius: var(--radius-pill);
     background: var(--surface-elevated);
   }
@@ -876,7 +968,7 @@
     background: transparent;
     color: var(--text-secondary);
     font-size: 11px;
-    padding: 4px 10px;
+    padding: 4px 9px;
   }
 
   .dock-mode-pill.selected {
@@ -904,6 +996,12 @@
     color: var(--text-primary);
   }
 
+  .dock-sub-btn:disabled,
+  .dock-primary-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
   .dock-primary-btn {
     border: 0;
     border-radius: var(--radius-pill);
@@ -915,7 +1013,7 @@
     white-space: nowrap;
   }
 
-  .dock-primary-btn:hover {
+  .dock-primary-btn:hover:not(:disabled) {
     filter: brightness(0.95);
   }
 
@@ -929,6 +1027,10 @@
     color: var(--text-primary);
     padding: 10px 12px;
     font-size: 13px;
+  }
+
+  .dock-input-white {
+    background: #fff;
   }
 
   .dock-input:focus-visible {
@@ -1091,6 +1193,22 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-muted);
+  }
+
+  .dock-create-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--surface-card);
+  }
+
+  .dock-error-note {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--error);
   }
 
   .dock-setup-form {

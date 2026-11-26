@@ -18,10 +18,13 @@ export function mountAppsDrawer(
 
 export function mountWorkspaceDock(
   target: HTMLElement,
-  { onToast }: { onToast?: (message: string) => void } = {},
+  {
+    onToast,
+    onToggleChat,
+  }: { onToast?: (message: string) => void; onToggleChat?: () => void } = {},
 ): () => void {
   target.replaceChildren();
-  const instance = mount(WorkspaceDock, { target, props: { onToast } });
+  const instance = mount(WorkspaceDock, { target, props: { onToast, onToggleChat } });
   const offToast = onToast ? dockStore.onToast(onToast) : () => {};
   return () => {
     offToast();

@@ -145,3 +145,27 @@ describe('appCatalog & dock helpers', () => {
     expect(parsed?.activeTabId).toBe('t-1');
   });
 });
+
+import {
+  buildGoogleEditUrl,
+  defaultNewFileTitle,
+  extractDriveFolderId,
+} from '../../core/googleDriveApi';
+
+describe('googleDriveApi helpers', () => {
+  it('extracts folder ID from valid Drive folder URLs only', () => {
+    expect(extractDriveFolderId('https://drive.google.com/drive/folders/1AbC_def-99?usp=sharing')).toBe('1AbC_def-99');
+    expect(extractDriveFolderId('https://drive.google.com/drive/u/0/folders/folder123')).toBe('folder123');
+    expect(extractDriveFolderId('https://example.com/drive/folders/abc')).toBeNull();
+    expect(extractDriveFolderId('')).toBeNull();
+  });
+
+  it('builds Google Docs and Sheets edit URLs and default titles', () => {
+    expect(buildGoogleEditUrl('document', 'doc_1')).toBe('https://docs.google.com/document/d/doc_1/edit');
+    expect(buildGoogleEditUrl('spreadsheets', 'sheet_2')).toBe('https://docs.google.com/spreadsheets/d/sheet_2/edit');
+
+    const fixedDate = new Date(2026, 10, 26, 9, 5);
+    expect(defaultNewFileTitle('document', fixedDate)).toBe('Tài liệu TheoLab · 26/11 09:05');
+    expect(defaultNewFileTitle('spreadsheets', fixedDate)).toBe('Bảng tính TheoLab · 26/11 09:05');
+  });
+});

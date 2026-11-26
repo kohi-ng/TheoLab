@@ -20,18 +20,62 @@ async function getFirebaseServices() {
   return firebaseServices;
 }
 
+const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+let driveAccessToken = null;
+let driveTokenExpiresAt = 0;
+
+function storeCredentialToken(authModule, result) {
+  const credential = authModule.GoogleAuthProvider.credentialFromResult(result);
+  if (credential?.accessToken) {
+    driveAccessToken = credential.accessToken;
+    // Google OAuth access tokens typically live 3600s; refresh proactively after 50 min.
+    driveTokenExpiresAt = Date.now() + 50 * 60 * 1000;
+  }
+  return driveAccessToken;
+}
+
 export async function signInWithGoogle() {
   const { auth, authModule } = await getFirebaseServices();
   const provider = new authModule.GoogleAuthProvider();
+  provider.addScope(DRIVE_FILE_SCOPE);
   const result = await authModule.signInWithPopup(auth, provider);
   if (result.user.email !== OWNER_EMAIL || !result.user.emailVerified) {
+    driveAccessToken = null;
+    driveTokenExpiresAt = 0;
     await authModule.signOut(auth);
     throw new Error('Tài khoản không được phép truy cập TheoLab.');
   }
+  storeCredentialToken(authModule, result);
   return result.user;
 }
 
+export async function requestGoogleDriveToken({ forceRefresh = false } = {}) {
+  if (!forceRefresh && driveAccessToken && Date.now() < driveTokenExpiresAt) {
+    return driveAccessToken;
+  }
+  const { auth, authModule } = await getFirebaseServices();
+  const provider = new authModule.GoogleAuthProvider();
+  provider.addScope(DRIVE_FILE_SCOPE);
+  if (OWNER_EMAIL) provider.setCustomParameters({ login_hint: OWNER_EMAIL });
+  const result = auth.currentUser
+    ? await authModule.reauthenticateWithPopup(auth.currentUser, provider)
+    : await authModule.signInWithPopup(auth, provider);
+  if (result.user.email !== OWNER_EMAIL || !result.user.emailVerified) {
+    driveAccessToken = null;
+    driveTokenExpiresAt = 0;
+    await authModule.signOut(auth);
+    throw new Error('Tài khoản không được phép truy cập TheoLab.');
+  }
+  const token = storeCredentialToken(authModule, result);
+  if (!token) {
+    throw new Error('Không lấy được Google Drive access token từ phiên đăng nhập.');
+  }
+  return token;
+}
+
 export async function signOut() {
+  driveAccessToken = null;
+  driveTokenExpiresAt = 0;
   const { auth, authModule } = await getFirebaseServices();
   await authModule.signOut(auth);
 }
