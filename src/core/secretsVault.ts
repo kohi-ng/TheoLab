@@ -14,6 +14,10 @@ export interface OwnerVaultData {
   geminiApiKey?: string;
   driveFolderUrl?: string;
   vertexLocation?: string;
+  calendarEmbedUrl?: string;
+  jupyterLiteUrl?: string;
+  ketcherUrl?: string;
+  desmosUrl?: string;
 }
 
 const LOCAL_VAULT_KEY = 'theolab:dev-vault';

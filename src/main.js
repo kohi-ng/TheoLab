@@ -48,6 +48,16 @@ import {
   listDriveLibraryItems,
   removeDriveLibraryItem,
 } from './core/driveLibrary.ts';
+import {
+  canOpenLibraryItemInDock,
+  dockStore,
+  mountAppsDrawer,
+  mountWorkspaceDock,
+  onDockLayoutChange,
+  openLibraryItemInDock,
+  syncDockLibraryBridge,
+} from './modules/apps/mountApps.ts';
+import { extractCalendarEmbedUrl, isAllowedAppUrl } from './modules/apps/appCatalog.ts';
 
 const defaultModels = {
   vertex: { model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash' },
@@ -77,13 +87,15 @@ let quickRequest = 0;
 let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
+let unmountDock = null;
+let dockLayout = dockStore.layoutSnapshot;
 let unitTitle = 'TheoLab';
 // In firebase_auth mode no data is read or written until the owner has signed in.
 let dataReady = false;
 let dataLoading = false;
 
 function requireData() {
-  if (!dataReady) toast('Hãy đăng nhập Google ở tab Cấu hình và đợi tải dữ liệu.');
+  if (!dataReady) toast('Hãy đăng nhập Google ở nút ⚙ Cài đặt (góc dưới) và đợi tải dữ liệu.');
   return dataReady;
 }
 
@@ -128,11 +140,12 @@ app.innerHTML = `
       <button class="icon-button menu-button" aria-label="Mở menu" data-action="drawer">☰</button>
       <h1 class="topbar-title" id="current-title">TheoLab</h1>
       <div class="topbar-actions">
+        <button class="quick-button" data-action="dock" id="dock-toggle-btn" aria-pressed="false" title="Đóng / mở khung ứng dụng chia tab">◫ Ứng dụng</button>
         <button class="quick-button" data-action="formula">✦ Công thức</button>
         <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
       </div>
     </header>
-    <main class="app-main">
+    <main class="app-main" id="app-main">
       <section class="content-pane"><div class="page-content" id="page-content"></div></section>
       <aside class="chat-pane hidden" id="chat-pane" aria-label="Chat nhanh với Agent">
         <div class="mobile-grabber"></div>
@@ -143,6 +156,8 @@ app.innerHTML = `
         <div class="chat-messages" id="quick-messages"></div>
         <div class="composer-host" id="quick-composer"></div>
       </aside>
+      <div class="dock-splitter hidden" id="dock-splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để thay đổi tỷ lệ chia khung" tabindex="0"></div>
+      <section class="dock-pane hidden" id="dock-pane" aria-label="Không gian ứng dụng chia tab"></section>
     </main>
   </div>
   <div class="drawer-backdrop" id="drawer-backdrop"></div>
@@ -176,11 +191,16 @@ app.innerHTML = `
 `;
 
 const page = document.querySelector('#page-content');
+const appMain = document.querySelector('#app-main');
+const appShell = document.querySelector('.app-shell');
 const drawer = document.querySelector('#drawer');
 const backdrop = document.querySelector('#drawer-backdrop');
 const drawerView = document.querySelector('#drawer-view');
 const quickPane = document.querySelector('#chat-pane');
 const quickMessagesRoot = document.querySelector('#quick-messages');
+const dockPane = document.querySelector('#dock-pane');
+const dockSplitter = document.querySelector('#dock-splitter');
+const dockToggleBtn = document.querySelector('#dock-toggle-btn');
 
 function toast(message) {
   const node = document.querySelector('#toast');
@@ -190,6 +210,91 @@ function toast(message) {
 }
 
 const mobileLayout = window.matchMedia('(max-width: 800px)');
+
+function syncWorkspaceLayout() {
+  const mobile = mobileLayout.matches;
+  const dockOpen = Boolean(dockLayout.open);
+  const dockExpanded = dockOpen && Boolean(dockLayout.expanded);
+  const chatWithDock = dockOpen && quickChatOpen && !mobile;
+  const chatOnly = !dockOpen && quickChatOpen && !mobile && workspace !== 'ai';
+  const showSplitter = dockOpen && !mobile && (!dockExpanded || quickChatOpen);
+
+  appMain.style.setProperty('--split-left', `${(dockLayout.splitRatio * 100).toFixed(2)}%`);
+  appMain.classList.toggle('dock-open', dockOpen && !mobile);
+  appMain.classList.toggle('dock-expanded', dockExpanded && !quickChatOpen && !mobile);
+  appMain.classList.toggle('chat-with-dock', chatWithDock);
+  appMain.classList.toggle('chat-open', chatOnly);
+  appShell.classList.toggle('dock-expanded', dockExpanded);
+
+  dockPane.classList.toggle('hidden', !dockOpen);
+  dockPane.classList.toggle('mobile-open', dockOpen && mobile);
+  dockSplitter.classList.toggle('hidden', !showSplitter);
+
+  const showQuickChat = quickChatOpen && (mobile || chatWithDock || chatOnly);
+  quickPane.classList.toggle('hidden', !showQuickChat);
+  quickPane.classList.toggle('mobile-open', quickChatOpen && mobile);
+
+  document.querySelectorAll('[data-action="chat"]').forEach((button) => {
+    button.classList.toggle('active', quickChatOpen);
+    button.setAttribute('aria-pressed', String(quickChatOpen));
+  });
+
+  if (dockToggleBtn) {
+    dockToggleBtn.textContent = dockLayout.tabCount > 0 ? `◫ ${dockLayout.tabCount} tab` : '◫ Ứng dụng';
+    dockToggleBtn.classList.toggle('active', dockOpen);
+    dockToggleBtn.setAttribute('aria-pressed', String(dockOpen));
+  }
+}
+
+function initDockSplitter() {
+  let activePointerId = null;
+
+  const updateFromClientX = (clientX) => {
+    const rect = appMain.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = (clientX - rect.left) / rect.width;
+    dockStore.setSplitRatio(ratio);
+  };
+
+  dockSplitter.addEventListener('pointerdown', (event) => {
+    if (mobileLayout.matches) return;
+    event.preventDefault();
+    activePointerId = event.pointerId;
+    dockSplitter.setPointerCapture(event.pointerId);
+    document.body.classList.add('dock-resizing');
+    dockStore.setDragging(true);
+  });
+
+  dockSplitter.addEventListener('pointermove', (event) => {
+    if (activePointerId !== event.pointerId) return;
+    updateFromClientX(event.clientX);
+  });
+
+  const endDrag = (event) => {
+    if (activePointerId !== event.pointerId) return;
+    activePointerId = null;
+    document.body.classList.remove('dock-resizing');
+    dockStore.setDragging(false);
+  };
+
+  dockSplitter.addEventListener('pointerup', endDrag);
+  dockSplitter.addEventListener('pointercancel', endDrag);
+  dockSplitter.addEventListener('dblclick', () => dockStore.setSplitRatio(0.5));
+  dockSplitter.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      dockStore.setSplitRatio(dockLayout.splitRatio - 0.03);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      dockStore.setSplitRatio(dockLayout.splitRatio + 0.03);
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      dockStore.setSplitRatio(0.5);
+    }
+  });
+}
+
+mobileLayout.addEventListener('change', () => syncWorkspaceLayout());
 
 // Desktop: the sidebar is persistent and the menu button collapses it to a rail.
 // Mobile: the same element is an overlay drawer.
@@ -244,22 +349,16 @@ function renderNavigation() {
 
 function setQuickChat(open) {
   quickChatOpen = open;
-  quickPane.classList.toggle('hidden', false);
-  const mobile = window.matchMedia('(max-width: 800px)').matches;
-  quickPane.classList.toggle('mobile-open', open && mobile);
-  document.querySelector('.app-main').classList.toggle('chat-open', open && !mobile);
-  document.querySelectorAll('[data-action="chat"]').forEach((button) => {
-    button.classList.toggle('active', open);
-    button.setAttribute('aria-pressed', String(open));
-  });
-  if (!open) {
-    quickPane.classList.add('hidden');
-    quickPane.classList.remove('mobile-open');
-    return;
+  if (open && dockLayout.open && dockLayout.expanded) {
+    // 1b: opening Quick Chat alongside an expanded App dock splits them side-by-side.
+    dockStore.setExpanded(false);
   }
+  syncWorkspaceLayout();
+  if (!open) return;
+  const active = getActiveContext();
   quickPreferences = {
     ...quickPreferences,
-    autoContext: Boolean(getActiveContext().lessonId),
+    autoContext: Boolean(active.lessonId || active.activeDockTab),
   };
   if (!quickMessages.length) {
     quickMessages.push({
@@ -312,6 +411,13 @@ async function buildAgentContext(preferences) {
     activeLesson: safeLessonContext(activeLesson),
     lessons: explicitLessons.map(safeLessonContext),
     includeFormula: Boolean(preferences.includeFormula),
+    activeDockTab: preferences.autoContext && active.activeDockTab
+      ? {
+        title: String(active.activeDockTab.title ?? '').slice(0, 120),
+        appId: active.activeDockTab.appId ? String(active.activeDockTab.appId) : null,
+        kind: String(active.activeDockTab.kind ?? 'app'),
+      }
+      : null,
     libraryContext: preferences.libraryContext
       ? {
         id: preferences.libraryContext.id,
@@ -443,6 +549,7 @@ function renderAIWorkspace() {
   renderFullMessages();
   mountFullComposer();
   document.querySelector('.app-main').classList.add('ai-mode');
+  syncWorkspaceLayout();
 }
 
 async function openSession(session) {
@@ -559,6 +666,16 @@ function renderSessionList() {
   });
 }
 
+function syncLibraryToDock() {
+  syncDockLibraryBridge([...driveLibraryItems, ...LIBRARY_DOCUMENTS], async ({ title, url }) => {
+    const created = await addDriveLibraryItem({ title, url });
+    driveLibraryItems = [created, ...driveLibraryItems];
+    syncDockLibraryBridge([...driveLibraryItems, ...LIBRARY_DOCUMENTS]);
+    if (selectedTab === 'Thư viện') renderDrawerView();
+    return created;
+  });
+}
+
 function makeLibraryEntry(item, onChanged) {
   const row = document.createElement('div');
   row.style.display = 'flex';
@@ -579,6 +696,21 @@ function makeLibraryEntry(item, onChanged) {
   });
   row.append(button);
 
+  if (canOpenLibraryItemInDock(item)) {
+    const dockBtn = document.createElement('button');
+    dockBtn.type = 'button';
+    dockBtn.className = 'icon-button library-dock-btn';
+    dockBtn.title = 'Mở sang khung phải (chia tab)';
+    dockBtn.setAttribute('aria-label', `Mở ${item.title} sang khung phải`);
+    dockBtn.textContent = '◫';
+    dockBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openLibraryItemInDock(item);
+      if (mobileLayout.matches) setDrawer(false);
+    });
+    row.append(dockBtn);
+  }
+
   if (item.userAdded) {
     const del = document.createElement('button');
     del.type = 'button';
@@ -590,6 +722,7 @@ function makeLibraryEntry(item, onChanged) {
       event.stopPropagation();
       await removeDriveLibraryItem(item.id);
       driveLibraryItems = await listDriveLibraryItems();
+      syncLibraryToDock();
       toast(`Đã xóa "${item.title}" khỏi thư viện.`);
       onChanged?.();
     });
@@ -677,6 +810,7 @@ function renderLibraryDrawer() {
     try {
       const created = await addDriveLibraryItem({ title: titleInput.value, url: urlInput.value });
       driveLibraryItems = [created, ...driveLibraryItems];
+      syncLibraryToDock();
       titleInput.value = '';
       urlInput.value = '';
       addForm.hidden = true;
@@ -706,12 +840,19 @@ function renderDrawerView() {
       onSelectUnit: () => {
         selectedTab = 'Bài học';
         updateContext({ activeTab: 'Bài học' });
+        dockStore.setExpanded(false);
         showLesson();
         setDrawer(false);
       },
     });
   } else if (selectedTab === 'Thư viện') {
     renderLibraryDrawer();
+  } else if (selectedTab === 'Ứng dụng') {
+    unmountDrawerTree = mountAppsDrawer(drawerView, {
+      onLaunched: () => {
+        if (mobileLayout.matches) setDrawer(false);
+      },
+    });
   } else if (selectedTab === 'Soạn bài') {
     const button = document.createElement('button');
     button.className = 'tree-item';
@@ -743,6 +884,7 @@ async function showLesson() {
   setTitle(unitTitle);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
+  syncWorkspaceLayout();
   await ensureAcademyLoaded();
   if (workspace !== 'lesson') return;
   if (!unmountAcademyMain) {
@@ -754,8 +896,10 @@ async function showLesson() {
 async function showFormulas() {
   clearAcademyMain();
   workspace = 'lesson';
+  dockStore.setExpanded(false);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
+  syncWorkspaceLayout();
   const lessonModule = await loadModule('lessonViewer');
   await lessonModule.disposeLessonResources(page);
   const module = await loadModule('formulaHub');
@@ -796,13 +940,16 @@ async function showLibraryDocument(item) {
   clearAcademyMain();
   workspace = 'lesson';
   currentLibraryItemId = item.id;
+  dockStore.setExpanded(false);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
+  syncWorkspaceLayout();
   const lessonModule = await loadModule('lessonViewer');
   await lessonModule.disposeLessonResources(page);
   const viewer = await loadModule('libraryViewer');
   await viewer.renderLibraryDocument(page, item, {
     onAttach: (context) => attachLibraryContext(context).catch((error) => toast(error.message)),
+    onOpenInDock: canOpenLibraryItemInDock(item) ? (doc) => openLibraryItemInDock(doc) : undefined,
     renderFormula: async (target) => {
       const formulaModule = await loadModule('formulaHub');
       formulaModule.renderFormulaHub(target, katex);
@@ -826,6 +973,7 @@ async function renderLibrary() {
   currentLibraryItemId = null;
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
+  syncWorkspaceLayout();
   const lessonModule = await loadModule('lessonViewer');
   await lessonModule.disposeLessonResources(page);
   page.replaceChildren();
@@ -834,17 +982,19 @@ async function renderLibrary() {
   heading.textContent = 'Thư viện';
   const description = document.createElement('p');
   description.className = 'page-subtitle';
-  description.textContent = 'Chọn tài liệu, bộ công thức hoặc mô phỏng để mở trực tiếp trên canvas.';
+  description.textContent = 'Chọn tài liệu, bộ công thức hoặc mô phỏng để mở trên canvas, hoặc bấm ◫ để mở sang khung phải.';
   page.append(heading, description);
+  const allDocs = [...driveLibraryItems, ...LIBRARY_DOCUMENTS];
   LIBRARY_CATEGORIES.forEach((category) => {
+    const entries = allDocs.filter((item) => item.category === category.id);
+    if (!entries.length) return;
     const section = document.createElement('section');
     section.className = 'library-section';
     const categoryHeading = document.createElement('h2');
     categoryHeading.className = 'library-section-title';
     categoryHeading.textContent = category.label;
     section.append(categoryHeading);
-    LIBRARY_DOCUMENTS.filter((item) => item.category === category.id)
-      .forEach((item) => section.append(makeLibraryEntry(item)));
+    entries.forEach((item) => section.append(makeLibraryEntry(item, () => renderLibrary())));
     page.append(section);
   });
   document.querySelector('#current-title').textContent = 'Thư viện';
@@ -906,7 +1056,10 @@ function renderStudio() {
 function renderSettings() {
   clearAcademyMain();
   setTitle('Cấu hình');
+  dockStore.setExpanded(false);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
+  document.querySelector('.app-main').classList.remove('ai-mode');
+  syncWorkspaceLayout();
   const skills = listSkills();
   page.innerHTML = `
     <h1 class="page-title">Cấu hình</h1>
@@ -922,6 +1075,12 @@ function renderSettings() {
       <p class="status-line">Dữ liệu lưu trong Firestore <code>settings/secrets</code> — không nằm trên GitHub hay file build.</p>
       <label for="vault-drive-folder">Thư mục Google Drive cá nhân (lưu tài liệu/PDF)</label>
       <input class="text-input" id="vault-drive-folder" type="url" placeholder="https://drive.google.com/drive/folders/…" />
+      <label for="vault-calendar-embed">Google Calendar Embed URL (chế độ nhúng lịch)</label>
+      <input class="text-input" id="vault-calendar-embed" placeholder="https://calendar.google.com/calendar/embed?src=…" />
+      <label for="vault-jupyterlite-url">JupyterLite URL tự host (tùy chọn · bỏ trống để dùng bản mặc định)</label>
+      <input class="text-input" id="vault-jupyterlite-url" type="url" placeholder="https://…/jupyterlite/lab/index.html" />
+      <label for="vault-ketcher-url">Ketcher URL tự host (tùy chọn · bỏ trống để dùng bản mặc định)</label>
+      <input class="text-input" id="vault-ketcher-url" type="url" placeholder="https://…/ketcher/index.html" />
       <label for="vault-vertex-location">Vùng Vertex AI (Firebase AI Logic)</label>
       <input class="text-input" id="vault-vertex-location" placeholder="global" />
       <label for="vault-gemini-key">Gemini API Key (cho Vector Embedding · tùy chọn)</label>
@@ -956,10 +1115,16 @@ function renderSettings() {
   const modelInput = document.querySelector('#model');
   const endpointInput = document.querySelector('#custom-endpoint');
   const vaultDriveInput = document.querySelector('#vault-drive-folder');
+  const vaultCalendarInput = document.querySelector('#vault-calendar-embed');
+  const vaultJupyterInput = document.querySelector('#vault-jupyterlite-url');
+  const vaultKetcherInput = document.querySelector('#vault-ketcher-url');
   const vaultLocationInput = document.querySelector('#vault-vertex-location');
   const vaultGeminiInput = document.querySelector('#vault-gemini-key');
   const fillVaultFields = (vault) => {
     vaultDriveInput.value = vault.driveFolderUrl ?? '';
+    vaultCalendarInput.value = vault.calendarEmbedUrl ?? '';
+    vaultJupyterInput.value = vault.jupyterLiteUrl ?? '';
+    vaultKetcherInput.value = vault.ketcherUrl ?? '';
     vaultLocationInput.value = vault.vertexLocation ?? 'global';
     vaultGeminiInput.value = vault.geminiApiKey ?? '';
   };
@@ -970,12 +1135,32 @@ function renderSettings() {
       toast('Thư mục Drive phải thuộc https://drive.google.com hoặc https://docs.google.com.');
       return;
     }
+    const calendarRaw = vaultCalendarInput.value.trim();
+    const calendarEmbedUrl = calendarRaw ? extractCalendarEmbedUrl(calendarRaw) : '';
+    if (calendarRaw && !calendarEmbedUrl) {
+      toast('URL Google Calendar phải dạng https://calendar.google.com/calendar/embed?src=…');
+      return;
+    }
+    const jupyterLiteUrl = vaultJupyterInput.value.trim();
+    if (jupyterLiteUrl && !isAllowedAppUrl(jupyterLiteUrl)) {
+      toast('URL JupyterLite phải dùng https:// (hoặc http://localhost).');
+      return;
+    }
+    const ketcherUrl = vaultKetcherInput.value.trim();
+    if (ketcherUrl && !isAllowedAppUrl(ketcherUrl)) {
+      toast('URL Ketcher phải dùng https:// (hoặc http://localhost).');
+      return;
+    }
     try {
       await saveOwnerVault({
         driveFolderUrl: folder,
+        calendarEmbedUrl: calendarEmbedUrl ?? '',
+        jupyterLiteUrl,
+        ketcherUrl,
         vertexLocation: vaultLocationInput.value.trim() || 'global',
         geminiApiKey: vaultGeminiInput.value.trim(),
       });
+      dockStore.refreshVaultUrls();
       toast('Đã lưu vào Firestore Vault (chỉ tài khoản chủ sở hữu đọc được).');
     } catch (error) {
       toast(`Không thể lưu Vault: ${error.message}`);
@@ -1009,6 +1194,7 @@ function renderSettings() {
       document.querySelector('#auth-status').textContent = `Đã đăng nhập: ${user.email}`;
       const vault = await loadOwnerVault();
       fillVaultFields(vault);
+      dockStore.refreshVaultUrls();
       toast('Đã mở khóa Firestore Vault.');
     } catch (error) {
       toast(error.message);
@@ -1022,7 +1208,10 @@ function renderSettings() {
       ? 'dev_mock · xác thực được bypass'
       : state.user ? `Đã đăng nhập: ${state.user.email}` : 'Chưa đăng nhập · chỉ chủ sở hữu đã xác minh được phép';
     if (state.authorized) {
-      loadOwnerVault().then(fillVaultFields).catch(() => {});
+      loadOwnerVault().then((vault) => {
+        fillVaultFields(vault);
+        dockStore.refreshVaultUrls();
+      }).catch(() => {});
     } else {
       clearVaultCache();
     }
@@ -1060,6 +1249,17 @@ async function sendQuickMessage(prompt, preferences) {
 
 function handleTab(tab) {
   if (tab.id !== 'settings' && !requireData()) return;
+  // Cách A: clicking "Ứng dụng" only swaps the sidebar drawer to the Apps catalog
+  // without disrupting the active left primary workspace (Bài học / AI / Thư viện / Soạn bài).
+  if (tab.id === 'apps') {
+    if (!mobileLayout.matches && document.body.classList.contains('sidebar-collapsed')) {
+      document.body.classList.remove('sidebar-collapsed');
+    }
+    selectedTab = tab.label;
+    renderDrawerView();
+    return;
+  }
+  dockStore.setExpanded(false);
   selectedTab = tab.label;
   setTitle(tab.label);
   updateContext({ activeTab: tab.label });
@@ -1093,6 +1293,7 @@ function handleTab(tab) {
     workspace = 'lesson';
     document.querySelector('.app-shell').classList.remove('ai-workspace-open');
     document.querySelector('.app-main').classList.remove('ai-mode');
+    syncWorkspaceLayout();
     page.replaceChildren();
     const heading = document.createElement('h1');
     heading.className = 'page-title';
@@ -1108,10 +1309,12 @@ document.addEventListener('click', (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (action === 'drawer') toggleSidebar();
   if (action === 'open-settings') window.dispatchEvent(new CustomEvent('theolab:open-settings'));
+  if (action === 'dock' && requireData()) dockStore.toggleOpen();
   if (action === 'chat' && requireData()) setQuickChat(!quickChatOpen);
   if (action === 'formula') showFormulas();
   if (action === 'palette') window.dispatchEvent(new CustomEvent('theolab:open-palette'));
   if (action === 'new-session') {
+    dockStore.setExpanded(false);
     createSession().then(() => setDrawer(false)).catch((error) => toast(error.message));
   }
   if (action === 'toggle-overflow') {
@@ -1131,6 +1334,7 @@ window.addEventListener('theolab:navigate-deep-link', async (event) => {
   if (typeof deepLink !== 'string') return;
   const ok = await navigateToDeepLink(deepLink);
   if (ok) {
+    dockStore.setExpanded(false);
     selectedTab = 'Bài học';
     updateContext({ activeTab: 'Bài học' });
     await showLesson();
@@ -1139,6 +1343,14 @@ window.addEventListener('theolab:navigate-deep-link', async (event) => {
 });
 
 async function start() {
+  unmountDock?.();
+  unmountDock = mountWorkspaceDock(dockPane, { onToast: toast });
+  initDockSplitter();
+  onDockLayoutChange((snapshot) => {
+    dockLayout = snapshot;
+    syncWorkspaceLayout();
+  });
+
   const paletteHost = document.createElement('div');
   document.body.append(paletteHost);
   mountCommandPalette(paletteHost, {
@@ -1169,6 +1381,7 @@ async function start() {
 }
 
 function showSignIn() {
+  dockStore.setOpen(false);
   selectedTab = 'Cấu hình';
   renderNavigation();
   renderSettings();
@@ -1180,6 +1393,8 @@ async function loadData() {
   try {
     await loadOwnerVault().catch((error) => toast(`Không thể mở Vault: ${error.message}`));
     driveLibraryItems = await listDriveLibraryItems();
+    syncLibraryToDock();
+    dockStore.refreshVaultUrls();
     lesson = await loadLesson();
     lessons = await listLessons();
     sessions = await listChatSessions();

@@ -75,7 +75,13 @@ export async function addDriveLibraryItem(input: { title: string; url: string; n
     id: `drive-${slugify(title)}-${Date.now().toString(36)}`,
     category: 'documents',
     title,
-    sourceLabel: url.includes('docs.google.com') ? 'Google Docs' : 'Google Drive',
+    sourceLabel: url.includes('/spreadsheets/')
+      ? 'Google Sheets'
+      : url.includes('/presentation/')
+        ? 'Google Slides'
+        : url.includes('docs.google.com')
+          ? 'Google Docs'
+          : 'Google Drive',
     type: 'google',
     url,
     note: input.note?.trim() || undefined,

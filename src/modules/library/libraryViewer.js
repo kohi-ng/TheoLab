@@ -125,7 +125,7 @@ function googlePreviewUrl(rawUrl, embeddedEdit = false) {
   return `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`;
 }
 
-function addToolbar(container, item, onAttach) {
+function addToolbar(container, item, onAttach, onOpenInDock) {
   const toolbar = document.createElement('header');
   toolbar.className = 'document-toolbar';
   const titleGroup = document.createElement('div');
@@ -137,6 +137,14 @@ function addToolbar(container, item, onAttach) {
   titleGroup.append(title, source);
   const actions = document.createElement('div');
   actions.className = 'document-actions';
+  if (typeof onOpenInDock === 'function') {
+    const openDock = document.createElement('button');
+    openDock.type = 'button';
+    openDock.className = 'button button-soft';
+    openDock.textContent = '◫ Mở sang khung phải';
+    openDock.addEventListener('click', () => onOpenInDock(item));
+    actions.append(openDock);
+  }
   if (item.type === 'google' && item.url) {
     const open = document.createElement('a');
     open.className = 'button button-soft';
@@ -162,9 +170,9 @@ function addToolbar(container, item, onAttach) {
   container.append(toolbar);
 }
 
-export async function renderLibraryDocument(container, item, { onAttach, renderFormula }) {
+export async function renderLibraryDocument(container, item, { onAttach, renderFormula, onOpenInDock }) {
   container.replaceChildren();
-  addToolbar(container, item, onAttach);
+  addToolbar(container, item, onAttach, onOpenInDock);
   const body = document.createElement('section');
   body.className = 'document-content';
   container.append(body);

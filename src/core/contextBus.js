@@ -6,6 +6,7 @@ const state = {
   lastExerciseResult: null,
   widgetState: null,
   libraryContext: null,
+  activeDockTab: null,
 };
 const subscribers = new Set();
 

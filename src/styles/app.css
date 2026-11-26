@@ -153,9 +153,9 @@ details summary { cursor: pointer; color: var(--text-primary); font-weight: 600;
 .session-open small { margin-top: 5px; color: var(--text-muted); font-size: 10px; }
 .session-actions { display: flex; }
 .session-action { min-width: 32px; width: 32px; height: 32px; padding: 0; font-size: 15px; }
-.ai-mode .content-pane { flex: 1; }
-.ai-mode .chat-pane { display: none; }
-.app-shell.ai-workspace-open [data-action="chat"] { display: none; }
+.ai-mode:not(.dock-open) .content-pane { flex: 1; }
+.ai-mode:not(.chat-with-dock) .chat-pane { display: none; }
+.app-shell.ai-workspace-open:not(.dock-expanded) [data-action="chat"] { display: none; }
 .ai-mode .page-content { max-width: 1120px; height: calc(100vh - 112px); padding: 10px 20px 20px; }
 .ai-workspace { display: flex; flex-direction: column; height: 100%; min-height: 450px; max-width: 1000px; margin: 0 auto; }
 .ai-workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 4px 14px; }
@@ -170,7 +170,7 @@ details summary { cursor: pointer; color: var(--text-primary); font-weight: 600;
 .full-composer { width: min(900px, 100%); margin: 0 auto; padding: 0 4px 12px; }
 .full-composer .composer-wrap { background: var(--surface-elevated); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.composer-action:focus-visible, .model-pill:focus-visible, .send-button:focus-visible, .nav-tab:focus-visible { box-shadow: 0 0 0 3px rgb(26 115 232 / 18%); outline: none; }
+.composer-action:focus-visible, .model-pill:focus-visible, .send-button:focus-visible, .nav-tab:focus-visible, .dock-splitter:focus-visible { box-shadow: 0 0 0 3px rgb(26 115 232 / 18%); outline: none; }
 .mobile-grabber { display: none; }
 .toast { position: fixed; z-index: 40; bottom: 24px; left: 50%; transform: translateX(-50%); background: #252a31; color: #fff; border-radius: var(--radius-pill); padding: 12px 18px; box-shadow: var(--shadow-float); }
 .hidden { display: none !important; }
@@ -179,6 +179,8 @@ details summary { cursor: pointer; color: var(--text-primary); font-weight: 600;
 /* Gemini-style shell: persistent sidebar, open canvas, pill composer */
 :root { --sidebar-width: 288px; --topbar-height: 64px; }
 body.sidebar-collapsed { --sidebar-width: 72px; }
+body.dock-resizing { user-select: none; cursor: col-resize; }
+body.dock-resizing iframe { pointer-events: none; }
 .app-shell { margin-left: var(--sidebar-width); transition: margin-left .2s ease; }
 .topbar { position: sticky; top: 0; z-index: 10; height: var(--topbar-height); display: flex; align-items: center; gap: 12px; padding: 0 20px; background: rgb(248 250 253 / 92%); }
 .topbar-title { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -186,6 +188,21 @@ body.sidebar-collapsed { --sidebar-width: 72px; }
 .menu-button { display: none; }
 .app-main { display: flex; flex: 1; min-height: calc(100dvh - var(--topbar-height)); padding: 0 20px 20px; gap: 16px; }
 .chat-pane { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); }
+
+/* Right-pane Multi-Tab Workspace Dock & Resizable Split-Pane */
+.app-main.dock-open { gap: 4px; }
+.app-main.dock-open .content-pane { flex: 0 0 var(--split-left, 50%); min-width: 260px; transition: none; }
+.app-main.dock-open .page-content { padding-inline: 16px; }
+.app-main.dock-open.dock-expanded .content-pane { display: none; }
+.app-main.dock-open.chat-with-dock .content-pane { display: none; }
+.app-main.dock-open.chat-with-dock .chat-pane { flex: 0 0 var(--split-left, 40%); min-width: 280px; }
+.dock-splitter { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); flex: 0 0 10px; display: grid; place-items: center; cursor: col-resize; touch-action: none; border-radius: 999px; }
+.dock-splitter::before { content: ""; width: 4px; height: 42px; border-radius: 999px; background: transparent; transition: background .16s ease, height .16s ease; }
+.dock-splitter:hover::before, .dock-splitter:focus-visible::before, body.dock-resizing .dock-splitter::before { background: #b8c6dc; height: 64px; }
+.dock-pane { position: sticky; top: var(--topbar-height); height: calc(100dvh - var(--topbar-height) - 20px); flex: 1 1 0; min-width: 300px; display: flex; flex-direction: column; animation: slide-in .2s ease; }
+.library-dock-btn { min-width: 34px; width: 34px; height: 34px; padding: 0; font-size: 16px; color: var(--text-muted); }
+.library-dock-btn:hover { color: var(--accent-solid); }
+
 .drawer { position: fixed; inset: 0 auto 0 0; z-index: 21; width: var(--sidebar-width); display: flex; flex-direction: column; gap: 4px; padding: 12px 10px; background: var(--surface-drawer); transition: width .2s ease, transform .24s ease; }
 .drawer-header { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; }
 .drawer .icon-button { min-width: 36px; width: 36px; height: 36px; padding: 0; font-size: 19px; flex: 0 0 36px; }
@@ -217,8 +234,10 @@ body.sidebar-collapsed { --sidebar-width: 72px; }
   .quick-button { padding: 10px; font-size: 12px; }
   .page-content { padding: 18px 10px 40px; }
   .chat-open .content-pane { flex: 1; }
-  .chat-pane { position: fixed; z-index: 15; inset: auto 0 0; height: min(82vh, 760px); border-radius: 24px 24px 0 0; transform: translateY(105%); transition: transform .28s ease; box-shadow: var(--shadow-float); }
+  .chat-pane { position: fixed; z-index: 16; inset: auto 0 0; height: min(82vh, 760px); border-radius: 24px 24px 0 0; transform: translateY(105%); transition: transform .28s ease; box-shadow: var(--shadow-float); }
   .chat-pane.mobile-open { transform: translateY(0); }
+  .dock-splitter { display: none !important; }
+  .dock-pane { position: fixed; z-index: 14; inset: var(--topbar-height) 0 0; height: calc(100dvh - var(--topbar-height)); min-width: 0; padding: 0 6px 6px; background: var(--bg-canvas); }
   .mobile-grabber { display: block; width: 42px; height: 5px; background: #c4ccda; border-radius: 8px; margin: 10px auto 0; }
   .chat-header { padding-top: 10px; }
   .studio-layout { grid-template-columns: 1fr; }
