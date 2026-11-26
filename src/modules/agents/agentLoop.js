@@ -1,7 +1,9 @@
 import { getApiKey, getLocalSetting } from '../../core/dataGateway.js';
+import { getCachedVault } from '../../core/secretsVault.ts';
 import { getActiveContext } from '../../core/contextBus.js';
 import { getActiveSkills } from './skills/registry.js';
 import { search_vector_kb } from './functions/localFunctions.js';
+import { runVertexAI } from './vertexProvider.ts';
 
 async function readResponse(response) {
   const body = await response.json().catch(() => ({}));
@@ -35,8 +37,12 @@ export async function runAgent({
   preferences = {},
   context = {},
 }) {
-  const apiKey = getApiKey(provider);
-  if (!apiKey) throw new Error(`Thêm API Key ${provider} trong tab Cấu hình để gọi Agent.`);
+  const vault = getCachedVault();
+  const apiKey = (provider === 'google' ? vault.geminiApiKey : provider === 'vertex' ? vault.vertexApiKey : '')
+    || getApiKey(provider);
+  if (provider !== 'vertex' && !apiKey) {
+    throw new Error(`Thêm API Key ${provider} trong tab Cấu hình để gọi Agent.`);
+  }
   const currentContext = getActiveContext();
   const activeContext = {
     ...(preferences.autoContext ? currentContext : {
@@ -71,6 +77,9 @@ export async function runAgent({
     `Active lesson: ${JSON.stringify(activeLesson)}.`,
     `Explicitly selected lessons (sanitized): ${JSON.stringify(lessonContext)}.`,
     `Vector search: ${JSON.stringify(vectorResults)}.`,
+    vectorResults?.results?.length
+      ? 'When using facts from Vector search, cite the source inline with its breadcrumb and deep_link (e.g., [Vùng đệm](#/hoa-phan-tich/...)).'
+      : 'No vector search hits attached.',
     preferences.includeFormula
       ? 'Formula Hub references: Ka = [H+][A-]/[HA]; Kb = [HA][OH-]/[A-]; pKa = -log Ka; pKw = pH + pOH = 14.00 at 25 C; pH = pKa + log([A-]/[HA]).'
       : 'Formula Hub references are not attached.',
@@ -117,6 +126,16 @@ export async function runAgent({
     const body = await readResponse(response);
     return body.content?.filter((item) => item.type === 'text').map((item) => item.text).join('\n')
       ?? 'Mô hình không trả về nội dung.';
+  }
+
+  if (provider === 'vertex') {
+    return runVertexAI({
+      model: model || 'gemini-2.5-flash',
+      system,
+      prompt,
+      temperature: providerTemperature,
+      location: vault.vertexLocation || 'us-central1',
+    });
   }
 
   if (provider === 'google') {

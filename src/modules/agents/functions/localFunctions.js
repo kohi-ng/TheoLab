@@ -1,7 +1,23 @@
 import { getActiveContext } from '../../../core/contextBus.js';
+import { searchKnowledgeBase } from '../../kb/kbService.ts';
 
-export async function search_vector_kb(query) {
-  return { query: String(query), results: [], status: 'index_not_loaded' };
+export async function search_vector_kb(query, options = {}) {
+  const { hits, mode } = await searchKnowledgeBase(String(query ?? ''), {
+    k: options.k ?? 6,
+    filters: options.filters,
+  });
+  return {
+    query: String(query ?? ''),
+    mode,
+    status: hits.length ? 'ok' : 'no_matches',
+    results: hits.map((hit) => ({
+      title: hit.title,
+      breadcrumb: hit.breadcrumb,
+      snippet: hit.snippet,
+      deep_link: hit.deep_link,
+      score: Number(hit.score.toFixed(4)),
+    })),
+  };
 }
 
 export function push_exercise_card(card, target) {

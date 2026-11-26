@@ -1,7 +1,16 @@
 # TheoLab architecture guide
 
-TheoLab is a Vite application using Vanilla JavaScript ES Modules. Keep the
-codebase small, browser-native, and free of React, Vue, and Tailwind.
+TheoLab is a Vite application. Legacy modules are Vanilla JavaScript ES Modules;
+new UI is written as **Svelte 5 components (runes) in TypeScript**, and new
+domain logic as framework-free TypeScript in `src/domain/`. Svelte compiles to
+plain DOM code (no runtime virtual DOM), so the bundle stays small and
+browser-native. Do not add React, Vue, or Tailwind. Migrate vanilla modules to
+Svelte incrementally (mount components into existing containers) — never as a
+big-bang rewrite.
+
+Stack: Vite 8 · Svelte 5 · TypeScript (strict) · Zod 4 · Vitest · Firebase
+(Auth, Firestore, Storage) · KaTeX + mhchem. Run `npm test` and `npm run check`
+before committing.
 
 ## Architecture
 
@@ -18,9 +27,48 @@ codebase small, browser-native, and free of React, Vue, and Tailwind.
   registered through `moduleRegistry.js`. The drawer shows at most five
   primary vertical rows; additional primary or extension tabs appear under
   `⋯ Thêm`.
-- Lesson documents use a strict envelope (`id`, `schema_version`, `core`,
-  `payload`) and may add namespaced `extensions`. Blocks are extensible, but
-  the viewer must safely handle unknown types.
+- Lesson documents v1 (`id`, `schema_version` 1.x, `core`, `payload`) are
+  legacy. Convert them with `migrateLessonV1()` in
+  `src/domain/content/migrations.ts`; do not create new v1 documents.
+
+## Content model v2 (`src/domain/content/`)
+
+- Hierarchy: **Subject ▸ Chapter ▸ Unit ▸ Tab ▸ Block**, stored in Firestore as
+  `subjects/{s}/chapters/{c}/units/{u}/tabs/{t}` (path builders in `ids.ts`).
+  Shared, reusable collections are top-level: `questions`, `datasets`,
+  `concepts`, plus the derived `kb_chunks`.
+- `schemas.ts` (Zod 4) is the single source of truth for shapes and TS types.
+  Validate every import/save with it (`validation.ts` → `parseImport()`
+  accepts a `theolab-bundle` or a single document with `kind`).
+- Ids are stable ASCII slugs (`slugify()` folds Vietnamese). Sibling order uses
+  fractional `order` values (`orderBetween()`), so drag-and-drop rewrites one
+  document only.
+- A tab is one document with `format: blocks | markdown | file`. Files live in
+  owner-only Storage under `content/{s}/{c}/{u}/…`; never use public URLs for
+  private material.
+- Questions live in `questions` and are referenced from tabs via
+  `question_ref` blocks, so lessons and the exam room share one bank. Tables of
+  constants (Ka, αY⁴⁻, logβ, E°) are `datasets`, referenced by `dataset_ref`.
+- Unknown block types must be namespaced `x-…`; the viewer renders a safe
+  placeholder for them. Firestore forbids nested arrays (tables use
+  `rows: [{ cells: [] }]`).
+- **Source of truth is Firestore (owner-only), not Git.** Never commit lesson
+  content, exam files, or exports. Owner email and Firebase config come from
+  `VITE_*` env variables (`.env.local` locally, Actions secrets in CI).
+
+## Vector knowledge base (`src/domain/kb/`)
+
+- Embeddings: Gemini `gemini-embedding-2` (GA), 768 dims, called from the
+  browser with the owner's BYOK key. It has no `taskType`; use the prefixes in
+  `formatForEmbedding()` (`task: search result | query: …` /
+  `title: … | text: …`). Never mix vectors of different models or dimensions.
+- Chunking (`chunking.ts`): one block = one chunk, markdown split by headings,
+  each chunk has a breadcrumb, `deep_link` and a SHA-256 `content_hash`
+  (covers model + dims) for incremental re-embedding.
+- Storage: `kb_chunks` docs hold metadata + int8-quantised vector (base64) +
+  scale. Firestore KNN is server-SDK only, so retrieval runs client-side in
+  `vectorWorker.ts`: exact int8 dense scan + Vietnamese-folded BM25, fused with
+  RRF (`hybridSearch.ts`). Cache chunks in IndexedDB and sync by `updated_at`.
 
 ## Widget Plug Contract
 
@@ -97,13 +145,19 @@ usable by keyboard and touch. Inputs, selectors, and buttons may set
 
 ## Roadmap mở rộng
 
-- **Giai đoạn kế tiếp (với Claude):** Nạp tài liệu học mẫu, sau đó chuẩn hóa
-  cấu trúc chương/bài học JSON chi tiết gồm lý thuyết, collapsible chứng minh,
-  công thức, bài tập trắc nghiệm/nhập số có `tolerance`, và widget mô phỏng.
-- **Giai đoạn mở rộng sau:** Tích hợp Vector Embedding chuyên sâu theo từng
-  môn (`index.bin` + `meta.json`) trong Web Worker và cung cấp
-  `search_vector_kb` cho Agent. Giữ vector index tách rời khỏi phần vỏ và
-  không đưa file nhị phân vào Git.
-- Các việc nền tảng tiếp theo gồm xử lý token/lỗi provider, xác nhận rõ ràng
-  trước khi chia sẻ nội dung bài học, MCP transport có allowlist, schema
-  validation/migrations và kiểm thử auth, persistence, tolerance, extension.
+- **Giai đoạn 0 (xong):** Toolchain Vite 8 + Svelte 5 + TypeScript + Zod 4 +
+  Vitest; Content model v2 (`src/domain/content/`); Vector KB core
+  (`src/domain/kb/`, `vectorWorker.ts`); env-based `runtimeConfig.js` và
+  `firestore.rules` theo từng collection (owner-only).
+- **Giai đoạn 1 (đang triển khai):** `contentRepository.ts` (Firestore +
+  `dev_mock`), cây **Môn ▸ Chương ▸ Bài ▸ Tab** bằng Svelte 5 có nút `+` ở mọi
+  cấp, tab tài liệu/markdown/blocks, nạp/xuất JSON kèm Zod validation, và deep
+  link `#/subject/chapter/unit/tab#block`.
+- **Giai đoạn 2:** Trình biên dịch Markdown-directive ↔ blocks, import DOCX/đề
+  thi (human-in-the-loop) vào `questions` + `datasets`.
+- **Giai đoạn 3:** Ngân hàng câu hỏi (`question_ref`), bảng phụ lục dùng chung
+  (`dataset_ref`), Phòng thi theo ma trận CLO.
+- **Giai đoạn 4:** Pipeline đồng bộ `kb_chunks` (IndexedDB + Firestore),
+  `search_kb` + trích dẫn bấm được cho Agent, Command Palette `Ctrl+K`.
+- **Giai đoạn 5:** Đồ thị khái niệm (`concepts`), bài liên quan, tiến độ học
+  tập và ôn tập ngắt quãng.

@@ -14,13 +14,16 @@
 2. Enable Google as an Authentication provider and configure the authorized
    domains (include `localhost` and your GitHub Pages domain).
 3. Create a Firestore database and, if storing files, enable Firebase Storage.
-4. Replace the values in `src/config/runtimeConfig.js`: set `APP_MODE` to
-   `firebase_auth`, set `OWNER_EMAIL` to your verified Google account, and fill
-   in `firebaseConfig` from Firebase project settings.
+4. Copy `env.example` to `.env.local` (git-ignored): set `VITE_APP_MODE=firebase_auth`,
+   set `VITE_OWNER_EMAIL` to your verified Google account, and fill in
+   `VITE_FIREBASE_*` from Firebase project settings.
 5. Replace `YOUR_EMAIL@gmail.com` in `firestore.rules` and `storage.rules` with
    the same account. Deploy the rules using the Firebase console or Firebase
    CLI. Do not deploy the example rules unchanged.
-6. Firebase web configuration identifies a project; it is not an authorization
+6. For GitHub Pages CI, add the same `VITE_*` values as repository **Secrets**
+   in GitHub (Settings → Secrets and variables → Actions) so your email and
+   project ids stay out of Git history.
+7. Firebase web configuration identifies a project; it is not an authorization
    secret. Rules and the owner email check enforce access. Never put service
    account credentials in this frontend.
 

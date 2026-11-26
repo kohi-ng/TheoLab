@@ -28,8 +28,29 @@ import { LIBRARY_CATEGORIES, LIBRARY_DOCUMENTS } from './modules/library/library
 import { runAgent } from './modules/agents/agentLoop.js';
 import { clearMessages, mountChatComposer, renderMessage } from './modules/agents/chatUI.js';
 import { listSkills, setSkillEnabled } from './modules/agents/skills/registry.js';
+import {
+  ensureAcademyLoaded,
+  mountCourseTree,
+  mountUnitWorkspace,
+  navigateToDeepLink,
+  onAcademyEvent,
+} from './modules/academy/mountAcademy.ts';
+import { mountCommandPalette } from './modules/kb/mountKb.ts';
+import {
+  clearVaultCache,
+  getCachedVault,
+  isAllowedDriveUrl,
+  loadOwnerVault,
+  saveOwnerVault,
+} from './core/secretsVault.ts';
+import {
+  addDriveLibraryItem,
+  listDriveLibraryItems,
+  removeDriveLibraryItem,
+} from './core/driveLibrary.ts';
 
 const defaultModels = {
+  vertex: { model: 'gemini-2.5-flash', label: 'Vertex AI · Gemini 2.5 Flash' },
   openai: { model: 'gpt-4.1', label: 'GPT-4.1' },
   anthropic: { model: 'claude-sonnet-4-20250514', label: 'Claude Sonnet' },
   google: { model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -51,11 +72,19 @@ let quickMessages = [];
 let quickPreferences = makeDefaultPreferences(true);
 let quickComposerCleanup;
 let workspaceComposerCleanup;
+let driveLibraryItems = [];
 let quickRequest = 0;
 let saveQueue = Promise.resolve();
+let unmountDrawerTree = null;
+let unmountAcademyMain = null;
+
+function clearAcademyMain() {
+  unmountAcademyMain?.();
+  unmountAcademyMain = null;
+}
 
 function makeDefaultPreferences(withContext = false) {
-  const provider = getLocalSetting('provider', 'google');
+  const provider = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
   const defaultModel = defaultModels[provider] ?? defaultModels.google;
   return {
     provider,
@@ -64,7 +93,7 @@ function makeDefaultPreferences(withContext = false) {
     skill: 'supporter',
     temperature: 0.3,
     depth: 'balanced',
-    useRag: false,
+    useRag: true,
     useMcp: false,
     instructions: '',
     autoContext: withContext,
@@ -77,6 +106,7 @@ registerModule('lessonViewer', () => import('./modules/lessonViewer/lessonViewer
 registerModule('formulaHub', () => import('./modules/formulaHub/formulaHub.js'));
 registerModule('widget:formula_calc', () => import('./modules/widgets/formulaCalc.js'));
 registerModule('libraryViewer', () => import('./modules/library/libraryViewer.js'));
+registerModule('vectorKb', () => import('./modules/kb/mountKb.ts'));
 registerNavigationTabs(NAV_TABS);
 
 app.innerHTML = `
@@ -85,6 +115,7 @@ app.innerHTML = `
       <button class="icon-button menu-icon" aria-label="Mở menu" data-action="drawer">=</button>
       <h1 class="topbar-title" id="current-title">TheoLab</h1>
       <div class="topbar-actions">
+        <button class="quick-button" data-action="palette" title="Tìm kiếm ngữ nghĩa & từ khóa (Ctrl+K)">⌘K Tìm</button>
         <button class="quick-button" data-action="formula">✦ Công thức</button>
         <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
       </div>
@@ -357,6 +388,7 @@ async function sendFullMessage(prompt, preferences) {
 }
 
 function renderAIWorkspace() {
+  clearAcademyMain();
   workspace = 'ai';
   document.querySelector('.app-main').classList.remove('chat-open');
   page.innerHTML = `
@@ -497,10 +529,16 @@ function renderSessionList() {
   });
 }
 
-function makeLibraryEntry(item) {
+function makeLibraryEntry(item, onChanged) {
+  const row = document.createElement('div');
+  row.style.display = 'flex';
+  row.style.alignItems = 'center';
+  row.style.gap = '4px';
+
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `library-entry${currentLibraryItemId === item.id ? ' selected' : ''}`;
+  button.style.flex = '1';
   const title = document.createElement('strong');
   title.textContent = item.title;
   const source = document.createElement('small');
@@ -509,7 +547,25 @@ function makeLibraryEntry(item) {
   button.addEventListener('click', () => {
     showLibraryDocument(item).catch((error) => toast(`Không thể mở tài liệu: ${error.message}`));
   });
-  return button;
+  row.append(button);
+
+  if (item.userAdded) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'icon-button';
+    del.title = 'Xóa khỏi thư viện';
+    del.setAttribute('aria-label', `Xóa ${item.title}`);
+    del.textContent = '×';
+    del.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      await removeDriveLibraryItem(item.id);
+      driveLibraryItems = await listDriveLibraryItems();
+      toast(`Đã xóa "${item.title}" khỏi thư viện.`);
+      onChanged?.();
+    });
+    row.append(del);
+  }
+  return row;
 }
 
 function renderLibraryDrawer() {
@@ -517,57 +573,113 @@ function renderLibraryDrawer() {
   search.className = 'search-input';
   search.placeholder = 'Tìm nhanh trong thư viện';
   search.setAttribute('aria-label', 'Tìm tài liệu trong thư viện');
+
+  const driveControls = document.createElement('div');
+  driveControls.style.display = 'flex';
+  driveControls.style.flexDirection = 'column';
+  driveControls.style.gap = '6px';
+  driveControls.style.margin = '8px 0';
+
+  const folderUrl = getCachedVault().driveFolderUrl;
+  if (folderUrl) {
+    const folderLink = document.createElement('a');
+    folderLink.className = 'tree-item';
+    folderLink.href = folderUrl;
+    folderLink.target = '_blank';
+    folderLink.rel = 'noopener noreferrer';
+    folderLink.textContent = '↗ Mở thư mục Drive cá nhân';
+    driveControls.append(folderLink);
+  }
+
+  const addToggle = document.createElement('button');
+  addToggle.type = 'button';
+  addToggle.className = 'tree-item';
+  addToggle.textContent = '＋ Thêm tài liệu Google Drive';
+
+  const addForm = document.createElement('form');
+  addForm.hidden = true;
+  addForm.style.display = 'none';
+  addForm.style.flexDirection = 'column';
+  addForm.style.gap = '6px';
+  addForm.style.padding = '8px';
+  addForm.style.borderRadius = '12px';
+  addForm.style.background = 'var(--surface-elevated)';
+
+  const titleInput = document.createElement('input');
+  titleInput.className = 'search-input';
+  titleInput.placeholder = 'Tên tài liệu (VD: Đề thi Hóa phân tích)';
+  const urlInput = document.createElement('input');
+  urlInput.className = 'search-input';
+  urlInput.type = 'url';
+  urlInput.placeholder = 'https://drive.google.com/file/d/…';
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'submit';
+  submitBtn.className = 'button button-soft';
+  submitBtn.textContent = 'Lưu vào Thư viện';
+  addForm.append(titleInput, urlInput, submitBtn);
+
+  addToggle.addEventListener('click', () => {
+    const show = addForm.hidden;
+    addForm.hidden = !show;
+    addForm.style.display = show ? 'flex' : 'none';
+  });
+
+  driveControls.append(addToggle, addForm);
+
   const categoriesRoot = document.createElement('div');
   const renderCategories = () => {
     const query = search.value.trim().toLocaleLowerCase('vi');
+    const allDocs = [...driveLibraryItems, ...LIBRARY_DOCUMENTS];
     categoriesRoot.replaceChildren();
     LIBRARY_CATEGORIES.forEach((category) => {
-      const entries = LIBRARY_DOCUMENTS.filter((item) => item.category === category.id
+      const entries = allDocs.filter((item) => item.category === category.id
         && `${item.title} ${item.sourceLabel ?? ''}`.toLocaleLowerCase('vi').includes(query));
       if (!entries.length) return;
       const heading = document.createElement('h2');
       heading.className = 'drawer-section-title library-category-title';
       heading.textContent = category.label;
-      categoriesRoot.append(heading, ...entries.map(makeLibraryEntry));
+      categoriesRoot.append(heading, ...entries.map((entry) => makeLibraryEntry(entry, renderCategories)));
     });
   };
+
+  addForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const created = await addDriveLibraryItem({ title: titleInput.value, url: urlInput.value });
+      driveLibraryItems = [created, ...driveLibraryItems];
+      titleInput.value = '';
+      urlInput.value = '';
+      addForm.hidden = true;
+      addForm.style.display = 'none';
+      toast(`Đã thêm "${created.title}" vào thư viện Drive.`);
+      renderCategories();
+      await showLibraryDocument(created);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
   search.addEventListener('input', renderCategories);
   renderCategories();
-  drawerView.append(search, categoriesRoot);
+  drawerView.append(search, driveControls, categoriesRoot);
 }
 
 function renderDrawerView() {
   renderNavigation();
+  unmountDrawerTree?.();
+  unmountDrawerTree = null;
   drawerView.replaceChildren();
   if (selectedTab === 'AI') {
     renderSessionList();
   } else if (selectedTab === 'Bài học') {
-    const search = document.createElement('input');
-    search.className = 'search-input';
-    search.placeholder = 'Tìm bài học';
-    search.setAttribute('aria-label', 'Tìm bài học');
-    const tree = document.createElement('div');
-    tree.innerHTML = '<div class="tree-subject">Hóa phân tích</div><div class="tree-item tree-indent">Chương · Axit–bazơ</div>';
-    lessons.forEach((item) => {
-      const lessonButton = document.createElement('button');
-      lessonButton.className = `tree-item tree-indent${item.id === lesson?.id ? ' selected' : ''}`;
-      lessonButton.textContent = item.payload.title;
-      lessonButton.dataset.title = item.payload.title.toLowerCase();
-      lessonButton.addEventListener('click', async () => {
-        lesson = item.id === lesson?.id ? item : await loadLesson(item.id);
+    unmountDrawerTree = mountCourseTree(drawerView, {
+      onSelectUnit: () => {
         selectedTab = 'Bài học';
         updateContext({ activeTab: 'Bài học' });
-        await showLesson();
+        showLesson();
         setDrawer(false);
-      });
-      tree.append(lessonButton);
+      },
     });
-    search.addEventListener('input', () => {
-      tree.querySelectorAll('button.tree-item').forEach((button) => {
-        button.hidden = !button.dataset.title.includes(search.value.toLowerCase());
-      });
-    });
-    drawerView.append(search, tree);
   } else if (selectedTab === 'Thư viện') {
     renderLibraryDrawer();
   } else if (selectedTab === 'Soạn bài') {
@@ -600,15 +712,16 @@ async function showLesson() {
   workspace = 'lesson';
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
-  if (!lesson) lesson = await loadLesson();
-  const viewer = await loadModule('lessonViewer');
-  await viewer.renderLesson(lesson, page);
+  await ensureAcademyLoaded();
   if (workspace !== 'lesson') return;
-  document.querySelector('#current-title').textContent = lesson.payload.title;
-  renderDrawerView();
+  if (!unmountAcademyMain) {
+    unmountAcademyMain = mountUnitWorkspace(page);
+  }
+  if (!unmountDrawerTree && selectedTab === 'Bài học') renderDrawerView();
 }
 
 async function showFormulas() {
+  clearAcademyMain();
   workspace = 'lesson';
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
@@ -649,6 +762,7 @@ async function attachLibraryContext(context) {
 }
 
 async function showLibraryDocument(item) {
+  clearAcademyMain();
   workspace = 'lesson';
   currentLibraryItemId = item.id;
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
@@ -705,6 +819,7 @@ async function renderLibrary() {
 }
 
 function renderStudio() {
+  clearAcademyMain();
   workspace = 'lesson';
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
@@ -756,6 +871,7 @@ function renderStudio() {
 }
 
 function renderSettings() {
+  clearAcademyMain();
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   const skills = listSkills();
   page.innerHTML = `
@@ -768,10 +884,22 @@ function renderSettings() {
       <button class="button button-soft" data-action="sign-in">Đăng nhập Google</button>
     </section>
     <section class="settings-section">
-      <h3>BYOK · khóa API</h3>
+      <h3>Két bảo mật Firestore (chỉ mở khi đúng Gmail)</h3>
+      <p class="status-line">Dữ liệu lưu trong Firestore <code>settings/secrets</code> — không nằm trên GitHub hay file build.</p>
+      <label for="vault-drive-folder">Thư mục Google Drive cá nhân (lưu tài liệu/PDF)</label>
+      <input class="text-input" id="vault-drive-folder" type="url" placeholder="https://drive.google.com/drive/folders/…" />
+      <label for="vault-vertex-location">Vùng Vertex AI (Firebase AI Logic)</label>
+      <input class="text-input" id="vault-vertex-location" placeholder="us-central1" />
+      <label for="vault-gemini-key">Gemini API Key (cho Vector Embedding · tùy chọn)</label>
+      <input class="text-input" id="vault-gemini-key" type="password" autocomplete="off" placeholder="Nhập để lưu vào Firestore" />
+      <button class="button button-soft" data-action="save-vault">Lưu vào Firestore Vault</button>
+    </section>
+    <section class="settings-section">
+      <h3>BYOK · nhà cung cấp AI</h3>
       <label for="provider">Nhà cung cấp</label>
       <select class="select-input" id="provider">
-        <option value="google">Google AI</option><option value="anthropic">Anthropic</option>
+        <option value="vertex">Vertex AI (Firebase AI Logic · không cần key)</option>
+        <option value="google">Google AI Studio</option><option value="anthropic">Anthropic</option>
         <option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="custom">Custom</option>
       </select>
       <label for="api-key">API Key (chỉ lưu trong trình duyệt này)</label>
@@ -787,18 +915,44 @@ function renderSettings() {
       <label for="mcp-url">MCP Server URL (HTTP/SSE)</label>
       <input class="text-input" id="mcp-url" placeholder="https://…" />
       ${skills.map((skill) => `<div class="setting-row"><label for="skill-${skill.id}">${skill.name}</label><input id="skill-${skill.id}" type="checkbox" ${skill.enabled ? 'checked' : ''} data-skill="${skill.id}" /></div>`).join('')}
-      <p class="status-line">Khóa API được lưu trong localStorage, không được mã hóa. Chỉ gửi dữ liệu bạn đồng ý chia sẻ.</p>
+      <p class="status-line">Khóa BYOK lưu ở localStorage chỉ tiện cho máy cá nhân; khuyến nghị dùng Vertex AI hoặc Firestore Vault.</p>
     </section>`;
   const provider = document.querySelector('#provider');
   const keyInput = document.querySelector('#api-key');
   const modelInput = document.querySelector('#model');
   const endpointInput = document.querySelector('#custom-endpoint');
+  const vaultDriveInput = document.querySelector('#vault-drive-folder');
+  const vaultLocationInput = document.querySelector('#vault-vertex-location');
+  const vaultGeminiInput = document.querySelector('#vault-gemini-key');
+  const fillVaultFields = (vault) => {
+    vaultDriveInput.value = vault.driveFolderUrl ?? '';
+    vaultLocationInput.value = vault.vertexLocation ?? 'us-central1';
+    vaultGeminiInput.value = vault.geminiApiKey ?? '';
+  };
+  fillVaultFields(getCachedVault());
+  document.querySelector('[data-action="save-vault"]').addEventListener('click', async () => {
+    const folder = vaultDriveInput.value.trim();
+    if (folder && !isAllowedDriveUrl(folder)) {
+      toast('Thư mục Drive phải thuộc https://drive.google.com hoặc https://docs.google.com.');
+      return;
+    }
+    try {
+      await saveOwnerVault({
+        driveFolderUrl: folder,
+        vertexLocation: vaultLocationInput.value.trim() || 'us-central1',
+        geminiApiKey: vaultGeminiInput.value.trim(),
+      });
+      toast('Đã lưu vào Firestore Vault (chỉ tài khoản chủ sở hữu đọc được).');
+    } catch (error) {
+      toast(`Không thể lưu Vault: ${error.message}`);
+    }
+  });
   const updateProviderFields = () => {
-    const defaults = defaultModels[provider.value] ?? defaultModels.google;
+    const defaults = defaultModels[provider.value] ?? defaultModels.vertex;
     keyInput.value = getApiKey(provider.value);
     modelInput.value = getLocalSetting(`model:${provider.value}`, defaults.model);
   };
-  provider.value = getLocalSetting('provider', 'google');
+  provider.value = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
   updateProviderFields();
   endpointInput.value = getLocalSetting('custom-endpoint');
   provider.addEventListener('change', () => {
@@ -819,6 +973,9 @@ function renderSettings() {
     try {
       const user = await signInWithGoogle();
       document.querySelector('#auth-status').textContent = `Đã đăng nhập: ${user.email}`;
+      const vault = await loadOwnerVault();
+      fillVaultFields(vault);
+      toast('Đã mở khóa Firestore Vault.');
     } catch (error) {
       toast(error.message);
     }
@@ -830,6 +987,11 @@ function renderSettings() {
     status.textContent = APP_MODE === 'dev_mock'
       ? 'dev_mock · xác thực được bypass'
       : state.user ? `Đã đăng nhập: ${state.user.email}` : 'Chưa đăng nhập · chỉ chủ sở hữu đã xác minh được phép';
+    if (state.authorized) {
+      loadOwnerVault().then(fillVaultFields).catch(() => {});
+    } else {
+      clearVaultCache();
+    }
   }).catch((error) => toast(error.message));
 }
 
@@ -883,6 +1045,7 @@ function handleTab(tab) {
   } else if (tab.id === 'lesson') {
     showLesson();
   } else if (tab.moduleId) {
+    clearAcademyMain();
     loadModule(tab.moduleId)
       .then((module) => {
         if (typeof module?.renderMain === 'function') return module.renderMain(page, { contextBus: { getActiveContext, updateContext } });
@@ -890,6 +1053,7 @@ function handleTab(tab) {
       })
       .catch((error) => toast(`Không thể mở ${tab.label}: ${error.message}`));
   } else {
+    clearAcademyMain();
     workspace = 'lesson';
     document.querySelector('.app-shell').classList.remove('ai-workspace-open');
     document.querySelector('.app-main').classList.remove('ai-mode');
@@ -909,6 +1073,7 @@ document.addEventListener('click', (event) => {
   if (action === 'drawer') setDrawer(!drawerOpen);
   if (action === 'chat') setQuickChat(!quickChatOpen);
   if (action === 'formula') showFormulas();
+  if (action === 'palette') window.dispatchEvent(new CustomEvent('theolab:open-palette'));
   if (action === 'new-session') createSession().catch((error) => toast(error.message));
   if (action === 'toggle-overflow') {
     overflowExpanded = !overflowExpanded;
@@ -922,8 +1087,48 @@ window.addEventListener('theolab:open-settings', () => {
   renderSettings();
   setDrawer(false);
 });
+window.addEventListener('theolab:navigate-deep-link', async (event) => {
+  const deepLink = event.detail;
+  if (typeof deepLink !== 'string') return;
+  const ok = await navigateToDeepLink(deepLink);
+  if (ok) {
+    selectedTab = 'Bài học';
+    updateContext({ activeTab: 'Bài học' });
+    await showLesson();
+    setDrawer(false);
+  }
+});
 
 async function start() {
+  const paletteHost = document.createElement('div');
+  document.body.append(paletteHost);
+  mountCommandPalette(paletteHost, {
+    onNavigate: (deepLink) => {
+      window.dispatchEvent(new CustomEvent('theolab:navigate-deep-link', { detail: deepLink }));
+    },
+  });
+
+  onAcademyEvent((event) => {
+    if (event.type === 'toast' && event.message) toast(event.message);
+    if (event.type === 'unit-selected' && event.title) {
+      document.querySelector('#current-title').textContent = event.title;
+    }
+  });
+  getAuthState((state) => {
+    if (state.authorized) {
+      loadOwnerVault().catch(() => {});
+      listDriveLibraryItems()
+        .then((items) => {
+          driveLibraryItems = items;
+          if (selectedTab === 'Thư viện') renderDrawerView();
+        })
+        .catch(() => {});
+    } else {
+      clearVaultCache();
+    }
+  }).catch(() => {});
+
+  driveLibraryItems = await listDriveLibraryItems();
   lesson = await loadLesson();
   lessons = await listLessons();
   sessions = await listChatSessions();
