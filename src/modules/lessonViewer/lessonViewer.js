@@ -77,7 +77,8 @@ export function renderEmbeddedWidget(block, section) {
   const onLoad = () => {
     iframe.contentWindow?.postMessage({
       type: 'THEOLAB_INIT',
-      payload: { state: block.initial_state ?? {}, theme: currentTheme() },
+      // Blocks can be Svelte $state proxies, which postMessage cannot clone.
+      payload: { state: JSON.parse(JSON.stringify(block.initial_state ?? {})), theme: currentTheme() },
     }, '*');
   };
   const onMessage = (event) => {

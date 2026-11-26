@@ -77,6 +77,11 @@ let quickRequest = 0;
 let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
+let unitTitle = 'TheoLab';
+
+function setTitle(title) {
+  document.querySelector('#current-title').textContent = title;
+}
 
 function clearAcademyMain() {
   unmountAcademyMain?.();
@@ -726,6 +731,7 @@ function renderDrawerView() {
 
 async function showLesson() {
   workspace = 'lesson';
+  setTitle(unitTitle);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
   await ensureAcademyLoaded();
@@ -806,6 +812,7 @@ async function showLibraryDocument(item) {
 }
 
 async function renderLibrary() {
+  clearAcademyMain();
   workspace = 'lesson';
   currentLibraryItemId = null;
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
@@ -836,6 +843,7 @@ async function renderLibrary() {
 
 function renderStudio() {
   clearAcademyMain();
+  setTitle('Soạn bài');
   workspace = 'lesson';
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
@@ -888,6 +896,7 @@ function renderStudio() {
 
 function renderSettings() {
   clearAcademyMain();
+  setTitle('Cấu hình');
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   const skills = listSkills();
   page.innerHTML = `
@@ -1042,6 +1051,7 @@ async function sendQuickMessage(prompt, preferences) {
 
 function handleTab(tab) {
   selectedTab = tab.label;
+  setTitle(tab.label);
   updateContext({ activeTab: tab.label });
   renderDrawerView();
   if (tab.id === 'ai') {
@@ -1130,7 +1140,8 @@ async function start() {
   onAcademyEvent((event) => {
     if (event.type === 'toast' && event.message) toast(event.message);
     if (event.type === 'unit-selected' && event.title) {
-      document.querySelector('#current-title').textContent = event.title;
+      unitTitle = event.title;
+      if (selectedTab === 'Bài học') setTitle(unitTitle);
     }
   });
   getAuthState((state) => {
