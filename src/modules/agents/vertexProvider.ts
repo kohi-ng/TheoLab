@@ -13,12 +13,16 @@ export interface VertexCallParams {
   location?: string;
 }
 
+const DEFAULT_VERTEX_MODEL = 'gemini-3.8-flash';
+// Shut down on the Agent Platform (Vertex) API; saved sessions may still name them.
+const RETIRED_MODELS = /^gemini-(2\.|3\.6)/;
+
 export async function runVertexAI({
-  model = 'gemini-2.5-flash',
+  model = DEFAULT_VERTEX_MODEL,
   system,
   prompt,
   temperature = 0.3,
-  location = 'us-central1',
+  location = 'global',
 }: VertexCallParams): Promise<string> {
   if (APP_MODE !== 'firebase_auth' || !isFirebaseConfigured()) {
     throw new Error('Vertex AI (Firebase AI Logic) yêu cầu chế độ firebase_auth và đã đăng nhập Gmail chủ sở hữu.');
@@ -30,7 +34,7 @@ export async function runVertexAI({
   const app = getApps()[0] ?? initializeApp(firebaseConfig);
   const ai = getAI(app, { backend: new VertexAIBackend(location) });
   const generativeModel = getGenerativeModel(ai, {
-    model,
+    model: RETIRED_MODELS.test(model) ? DEFAULT_VERTEX_MODEL : model,
     systemInstruction: system,
     generationConfig: { temperature },
   });

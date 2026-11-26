@@ -1,8 +1,10 @@
-import { getApiKey } from '../../core/dataGateway.js';
+import { APP_MODE } from '../../config/runtimeConfig.js';
+import { getApiKey, getLocalSetting } from '../../core/dataGateway.js';
 import { getActiveContext, subscribeContext, updateContext } from '../../core/contextBus.js';
 import { checkNumeric, startCountdown } from '../assessmentEngine/assessmentEngine.js';
 
 const modelCatalog = [
+  { provider: 'vertex', model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash', description: 'Qua Firebase, không cần API Key' },
   { provider: 'google', model: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Suy luận sâu, giải bài phức tạp' },
   { provider: 'google', model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Phản hồi nhanh, ôn tập hằng ngày' },
   { provider: 'anthropic', model: 'claude-sonnet-4-20250514', label: 'Claude Sonnet', description: 'Phân tích dài, diễn đạt tự nhiên' },
@@ -213,6 +215,7 @@ function renderModels(popover, state, onChange) {
       const group = document.createElement('p');
       group.className = 'model-group';
       group.textContent = {
+        vertex: 'Vertex AI',
         google: 'Google AI',
         anthropic: 'Anthropic',
         openai: 'OpenAI',
@@ -231,10 +234,13 @@ function renderModels(popover, state, onChange) {
     const description = document.createElement('small');
     description.textContent = model.description;
     copy.append(name, description);
-    const configured = Boolean(getApiKey(model.provider));
+    const isVertex = model.provider === 'vertex';
+    const configured = isVertex ? APP_MODE === 'firebase_auth' : Boolean(getApiKey(model.provider));
     const status = document.createElement('span');
     status.className = `model-status${configured ? ' configured' : ''}`;
-    status.title = configured ? 'API Key đã được nhập' : 'Chưa có API Key';
+    status.title = isVertex
+      ? (configured ? 'Dùng đăng nhập Firebase' : 'Cần chế độ firebase_auth')
+      : (configured ? 'API Key đã được nhập' : 'Chưa có API Key');
     button.append(copy, status);
     button.addEventListener('click', () => {
       if (!configured) {

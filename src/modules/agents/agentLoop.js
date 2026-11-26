@@ -130,11 +130,11 @@ export async function runAgent({
 
   if (provider === 'vertex') {
     return runVertexAI({
-      model: model || 'gemini-2.5-flash',
+      model: model || 'gemini-3.8-flash',
       system,
       prompt,
       temperature: providerTemperature,
-      location: vault.vertexLocation || 'us-central1',
+      location: vault.vertexLocation || 'global',
     });
   }
 

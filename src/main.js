@@ -50,7 +50,7 @@ import {
 } from './core/driveLibrary.ts';
 
 const defaultModels = {
-  vertex: { model: 'gemini-2.5-flash', label: 'Vertex AI · Gemini 2.5 Flash' },
+  vertex: { model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash' },
   openai: { model: 'gpt-4.1', label: 'GPT-4.1' },
   anthropic: { model: 'claude-sonnet-4-20250514', label: 'Claude Sonnet' },
   google: { model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -460,7 +460,7 @@ async function openSession(session) {
 async function createSession() {
   if (!requireData()) return;
   const now = new Date().toISOString();
-  const provider = getLocalSetting('provider', 'google');
+  const provider = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
   const defaultModel = defaultModels[provider] ?? defaultModels.google;
   const session = {
     id: crypto.randomUUID(),
@@ -923,7 +923,7 @@ function renderSettings() {
       <label for="vault-drive-folder">Thư mục Google Drive cá nhân (lưu tài liệu/PDF)</label>
       <input class="text-input" id="vault-drive-folder" type="url" placeholder="https://drive.google.com/drive/folders/…" />
       <label for="vault-vertex-location">Vùng Vertex AI (Firebase AI Logic)</label>
-      <input class="text-input" id="vault-vertex-location" placeholder="us-central1" />
+      <input class="text-input" id="vault-vertex-location" placeholder="global" />
       <label for="vault-gemini-key">Gemini API Key (cho Vector Embedding · tùy chọn)</label>
       <input class="text-input" id="vault-gemini-key" type="password" autocomplete="off" placeholder="Nhập để lưu vào Firestore" />
       <button class="button button-soft" data-action="save-vault">Lưu vào Firestore Vault</button>
@@ -960,7 +960,7 @@ function renderSettings() {
   const vaultGeminiInput = document.querySelector('#vault-gemini-key');
   const fillVaultFields = (vault) => {
     vaultDriveInput.value = vault.driveFolderUrl ?? '';
-    vaultLocationInput.value = vault.vertexLocation ?? 'us-central1';
+    vaultLocationInput.value = vault.vertexLocation ?? 'global';
     vaultGeminiInput.value = vault.geminiApiKey ?? '';
   };
   fillVaultFields(getCachedVault());
@@ -973,7 +973,7 @@ function renderSettings() {
     try {
       await saveOwnerVault({
         driveFolderUrl: folder,
-        vertexLocation: vaultLocationInput.value.trim() || 'us-central1',
+        vertexLocation: vaultLocationInput.value.trim() || 'global',
         geminiApiKey: vaultGeminiInput.value.trim(),
       });
       toast('Đã lưu vào Firestore Vault (chỉ tài khoản chủ sở hữu đọc được).');
