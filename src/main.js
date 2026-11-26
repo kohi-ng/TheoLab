@@ -58,6 +58,7 @@ import {
   syncDockLibraryBridge,
 } from './modules/apps/mountApps.ts';
 import { extractCalendarEmbedUrl, isAllowedAppUrl } from './modules/apps/appCatalog.ts';
+import { mountTheonSettings } from './modules/theon/mountTheon.ts';
 
 const defaultModels = {
   vertex: { model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash' },
@@ -76,17 +77,13 @@ let selectedTab = 'Bài học';
 let overflowExpanded = false;
 let currentLibraryItemId = null;
 let drawerOpen = false;
-let quickChatOpen = false;
 let workspace = 'lesson';
-let quickMessages = [];
-let quickPreferences = makeDefaultPreferences(true);
-let quickComposerCleanup;
 let workspaceComposerCleanup;
 let driveLibraryItems = [];
-let quickRequest = 0;
 let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
+let unmountTheonSettings = null;
 let unmountDock = null;
 let dockLayout = dockStore.layoutSnapshot;
 let unitTitle = 'TheoLab';
@@ -106,6 +103,8 @@ function setTitle(title) {
 function clearAcademyMain() {
   unmountAcademyMain?.();
   unmountAcademyMain = null;
+  unmountTheonSettings?.();
+  unmountTheonSettings = null;
 }
 
 function makeDefaultPreferences(withContext = false) {
@@ -143,20 +142,10 @@ app.innerHTML = `
         <div class="topbar-actions">
           <button class="quick-button" data-action="dock" id="dock-toggle-btn" aria-pressed="false" title="Đóng / mở khung ứng dụng chia tab">◫ Ứng dụng</button>
           <button class="quick-button" data-action="formula">✦ Công thức</button>
-          <button class="quick-button" data-action="chat" aria-pressed="false">✧ Chat Agent</button>
         </div>
       </header>
       <main class="app-main" id="app-main">
         <section class="content-pane"><div class="page-content" id="page-content"></div></section>
-        <aside class="chat-pane hidden" id="chat-pane" aria-label="Chat nhanh với Agent">
-          <div class="mobile-grabber"></div>
-          <div class="chat-header">
-            <div class="chat-heading"><span class="sparkle">✦</span> Agent học tập</div>
-            <button class="icon-button" data-action="chat" aria-label="Đóng chat">×</button>
-          </div>
-          <div class="chat-messages" id="quick-messages"></div>
-          <div class="composer-host" id="quick-composer"></div>
-        </aside>
       </main>
     </div>
     <div class="dock-splitter hidden" id="dock-splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để thay đổi tỷ lệ chia khung" tabindex="0"></div>
@@ -184,6 +173,25 @@ app.innerHTML = `
       </nav>
       <div class="drawer-view" id="drawer-view"></div>
     </div>
+    <div class="theon-sidebar-row">
+      <button
+        class="theon-toggle-control"
+        id="theon-toggle-btn"
+        type="button"
+        role="switch"
+        aria-checked="false"
+        data-action="toggle-theon"
+        title="Bật / tắt Theon ở khung phải"
+      >
+        <span class="theon-toggle-left">
+          <span class="theon-dot" aria-hidden="true"></span>
+          <span class="nav-label theon-label">Theon</span>
+        </span>
+        <span class="theon-switch-track" aria-hidden="true">
+          <span class="theon-switch-thumb"></span>
+        </span>
+      </button>
+    </div>
     <div class="drawer-footer">
       <span class="avatar" aria-hidden="true">T</span><span class="footer-name">Không gian của tôi</span>
       <button class="icon-button" data-action="open-settings" aria-label="Mở cấu hình" title="Cấu hình">⚙</button>
@@ -198,11 +206,10 @@ const appShell = document.querySelector('#app-shell');
 const drawer = document.querySelector('#drawer');
 const backdrop = document.querySelector('#drawer-backdrop');
 const drawerView = document.querySelector('#drawer-view');
-const quickPane = document.querySelector('#chat-pane');
-const quickMessagesRoot = document.querySelector('#quick-messages');
 const dockPane = document.querySelector('#dock-pane');
 const dockSplitter = document.querySelector('#dock-splitter');
 const dockToggleBtn = document.querySelector('#dock-toggle-btn');
+const theonToggleBtn = document.querySelector('#theon-toggle-btn');
 
 function toast(message) {
   const node = document.querySelector('#toast');
@@ -217,34 +224,27 @@ function syncWorkspaceLayout() {
   const mobile = mobileLayout.matches;
   const dockOpen = Boolean(dockLayout.open);
   const dockExpanded = dockOpen && Boolean(dockLayout.expanded);
-  const chatWithDock = dockOpen && quickChatOpen && !mobile;
-  const chatOnly = !dockOpen && quickChatOpen && !mobile && workspace !== 'ai';
-  const showSplitter = dockOpen && !mobile && (!dockExpanded || quickChatOpen);
+  const showSplitter = dockOpen && !mobile && !dockExpanded;
+  const theonOpen = Boolean(dockLayout.theonOpen);
 
   appShell.style.setProperty('--split-left', `${(dockLayout.splitRatio * 100).toFixed(2)}%`);
   appShell.classList.toggle('dock-open', dockOpen && !mobile);
-  appShell.classList.toggle('dock-expanded', dockExpanded && !quickChatOpen && !mobile);
+  appShell.classList.toggle('dock-expanded', dockExpanded && !mobile);
   appMain.classList.toggle('dock-open', dockOpen && !mobile);
-  appMain.classList.toggle('chat-with-dock', chatWithDock);
-  appMain.classList.toggle('chat-open', chatOnly);
 
   dockPane.classList.toggle('hidden', !dockOpen);
   dockPane.classList.toggle('mobile-open', dockOpen && mobile);
   dockSplitter.classList.toggle('hidden', !showSplitter);
 
-  const showQuickChat = quickChatOpen && (mobile || chatWithDock || chatOnly);
-  quickPane.classList.toggle('hidden', !showQuickChat);
-  quickPane.classList.toggle('mobile-open', quickChatOpen && mobile);
-
-  document.querySelectorAll('[data-action="chat"]').forEach((button) => {
-    button.classList.toggle('active', quickChatOpen);
-    button.setAttribute('aria-pressed', String(quickChatOpen));
-  });
-
   if (dockToggleBtn) {
     dockToggleBtn.textContent = dockLayout.tabCount > 0 ? `◫ ${dockLayout.tabCount} tab` : '◫ Ứng dụng';
     dockToggleBtn.classList.toggle('active', dockOpen);
     dockToggleBtn.setAttribute('aria-pressed', String(dockOpen));
+  }
+
+  if (theonToggleBtn) {
+    theonToggleBtn.classList.toggle('on', theonOpen);
+    theonToggleBtn.setAttribute('aria-checked', String(theonOpen));
   }
 }
 
@@ -347,38 +347,6 @@ function renderNavigation() {
   overflowWrap.classList.toggle('hidden', !overflow.length);
   overflowPanel.classList.toggle('expanded', overflowExpanded && overflow.length > 0);
   overflowToggle?.setAttribute('aria-expanded', String(overflowExpanded && overflow.length > 0));
-}
-
-function setQuickChat(open) {
-  quickChatOpen = open;
-  if (open && dockLayout.open && dockLayout.expanded) {
-    // 1b: opening Quick Chat alongside an expanded App dock splits them side-by-side.
-    dockStore.setExpanded(false);
-  }
-  syncWorkspaceLayout();
-  if (!open) return;
-  const active = getActiveContext();
-  quickPreferences = {
-    ...quickPreferences,
-    autoContext: Boolean(active.lessonId || active.activeDockTab),
-  };
-  if (!quickMessages.length) {
-    quickMessages.push({
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: 'Mình cùng luyện một câu chuẩn độ nhé. Bạn có 45 giây để trả lời.',
-      exercise: { prompt: 'Thể tích NaOH (mL) · đáp số 25.0 ± 0.1', answer: 25, tolerance: 0.1, seconds: 45 },
-    });
-  }
-  mountQuickComposer();
-  renderQuickMessages();
-}
-
-function renderQuickMessages() {
-  clearMessages(quickMessagesRoot);
-  quickMessages.forEach((message) => renderMessage(quickMessagesRoot, message, {
-    onExerciseResult: (result) => updateContext({ selectedBlockId: 'chat-timed-exercise', lastExerciseResult: result }),
-  }));
 }
 
 function safeLessonContext(value) {
@@ -1105,6 +1073,7 @@ function renderSettings() {
       <label for="custom-endpoint">Custom endpoint (OpenAI-compatible)</label>
       <input class="text-input" id="custom-endpoint" placeholder="https://…" />
     </section>
+    <div id="theon-settings-host"></div>
     <section class="settings-section">
       <h3>MCP & Skills</h3>
       <label for="mcp-url">MCP Server URL (HTTP/SSE)</label>
@@ -1112,6 +1081,10 @@ function renderSettings() {
       ${skills.map((skill) => `<div class="setting-row"><label for="skill-${skill.id}">${skill.name}</label><input id="skill-${skill.id}" type="checkbox" ${skill.enabled ? 'checked' : ''} data-skill="${skill.id}" /></div>`).join('')}
       <p class="status-line">Khóa BYOK lưu ở localStorage chỉ tiện cho máy cá nhân; khuyến nghị dùng Vertex AI hoặc Firestore Vault.</p>
     </section>`;
+  const theonSettingsHost = document.querySelector('#theon-settings-host');
+  if (theonSettingsHost) {
+    unmountTheonSettings = mountTheonSettings(theonSettingsHost, { onToast: toast });
+  }
   const provider = document.querySelector('#provider');
   const keyInput = document.querySelector('#api-key');
   const modelInput = document.querySelector('#model');
@@ -1220,35 +1193,6 @@ function renderSettings() {
   }).catch((error) => toast(error.message));
 }
 
-function mountQuickComposer() {
-  const host = document.querySelector('#quick-composer');
-  if (!host) return;
-  quickComposerCleanup?.();
-  quickComposerCleanup = mountChatComposer(host, {
-    getState: () => quickPreferences,
-    onStateChange: (next) => { quickPreferences = next; },
-    lessons,
-    activeTitle: lesson?.payload.title,
-    onSend: sendQuickMessage,
-  });
-}
-
-async function sendQuickMessage(prompt, preferences) {
-  const requestId = ++quickRequest;
-  const user = { id: crypto.randomUUID(), role: 'user', content: prompt };
-  const assistant = { id: crypto.randomUUID(), role: 'assistant', content: 'Đang suy nghĩ…' };
-  quickMessages.push(user, assistant);
-  renderQuickMessages();
-  try {
-    const context = await buildAgentContext(preferences);
-    const answer = await runAgent({ prompt, provider: preferences.provider, model: preferences.model, preferences, context });
-    if (requestId === quickRequest) assistant.content = answer;
-  } catch (error) {
-    if (requestId === quickRequest) assistant.content = `Không thể gọi Agent: ${error.message}`;
-  }
-  if (requestId === quickRequest) renderQuickMessages();
-}
-
 function handleTab(tab) {
   if (tab.id !== 'settings' && !requireData()) return;
   // Cách A: clicking "Ứng dụng" only swaps the sidebar drawer to the Apps catalog
@@ -1312,7 +1256,10 @@ document.addEventListener('click', (event) => {
   if (action === 'drawer') toggleSidebar();
   if (action === 'open-settings') window.dispatchEvent(new CustomEvent('theolab:open-settings'));
   if (action === 'dock' && requireData()) dockStore.toggleOpen();
-  if (action === 'chat' && requireData()) setQuickChat(!quickChatOpen);
+  if (action === 'toggle-theon' && requireData()) {
+    dockStore.toggleTheon();
+    if (mobileLayout.matches) setDrawer(false);
+  }
   if (action === 'formula') showFormulas();
   if (action === 'palette') window.dispatchEvent(new CustomEvent('theolab:open-palette'));
   if (action === 'new-session') {
@@ -1348,9 +1295,6 @@ async function start() {
   unmountDock?.();
   unmountDock = mountWorkspaceDock(dockPane, {
     onToast: toast,
-    onToggleChat: () => {
-      if (requireData()) setQuickChat(!quickChatOpen);
-    },
   });
   initDockSplitter();
   onDockLayoutChange((snapshot) => {

@@ -34,6 +34,7 @@ export interface DockLayoutSnapshot {
   splitRatio: number;
   tabCount: number;
   activeTab: DockTab | null;
+  theonOpen: boolean;
 }
 
 class DockStore {
@@ -59,6 +60,10 @@ class DockStore {
     return this.tabs.find((t) => t.id === this.activeTabId) ?? this.tabs[0] ?? null;
   }
 
+  get isTheonOpen(): boolean {
+    return this.open && this.tabs.some((t) => t.kind === 'native-app' && t.nativeAppId === 'theon');
+  }
+
   get layoutSnapshot(): DockLayoutSnapshot {
     return {
       open: this.open,
@@ -66,6 +71,7 @@ class DockStore {
       splitRatio: this.splitRatio,
       tabCount: this.tabs.length,
       activeTab: this.activeTab,
+      theonOpen: this.isTheonOpen,
     };
   }
 
@@ -190,6 +196,38 @@ class DockStore {
     if (!app) {
       this.emitToast(`Không tìm thấy ứng dụng "${appId}".`);
       return null;
+    }
+
+    if (app.kind === 'native' && app.nativeAppId) {
+      const existingNative = this.tabs.find(
+        (tab) => tab.kind === 'native-app' && tab.nativeAppId === app.nativeAppId,
+      );
+      if (existingNative) {
+        this.open = true;
+        this.launcherOpen = false;
+        this.selectTab(existingNative.id);
+        return existingNative;
+      }
+
+      const tab: DockTab = {
+        id: `tab-${app.id}`,
+        kind: 'native-app',
+        appId: app.id,
+        nativeAppId: app.nativeAppId,
+        title: options.title?.trim() || app.shortName,
+        icon: app.icon,
+        url: '',
+        sandbox: '',
+      };
+
+      this.tabs = [...this.tabs, tab];
+      this.activeTabId = tab.id;
+      this.open = true;
+      this.launcherOpen = false;
+      this.hydrateActive();
+      this.persist();
+      this.notifyLayout();
+      return tab;
     }
 
     // If single-instance app or already open without forceNew & no custom URL, focus existing tab.
@@ -532,6 +570,21 @@ class DockStore {
 
   toggleLauncher() {
     this.launcherOpen = !this.launcherOpen;
+  }
+
+  setTheonOpen(nextOpen: boolean) {
+    if (nextOpen) {
+      this.openApp('theon');
+      return;
+    }
+    const theonTab = this.tabs.find((t) => t.kind === 'native-app' && t.nativeAppId === 'theon');
+    if (theonTab) {
+      this.closeTab(theonTab.id);
+    }
+  }
+
+  toggleTheon() {
+    this.setTheonOpen(!this.isTheonOpen);
   }
 }
 

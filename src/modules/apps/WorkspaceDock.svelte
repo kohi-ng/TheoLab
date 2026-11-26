@@ -12,11 +12,11 @@
   import { dockStore } from './dockStore.svelte';
   import { saveOwnerVault } from '../../core/secretsVault';
   import { createGoogleWorkspaceFile, type NewGoogleFileKind } from '../../core/googleDriveApi';
+  import TheonStage from '../theon/TheonStage.svelte';
 
   let {
     onToast,
-    onToggleChat,
-  }: { onToast?: (message: string) => void; onToggleChat?: () => void } = $props();
+  }: { onToast?: (message: string) => void } = $props();
 
   // Launcher popover state ("+" button)
   let launcherUrl = $state('');
@@ -221,18 +221,6 @@
       >
         +
       </button>
-      {#if onToggleChat}
-        <button
-          type="button"
-          class="dock-ctrl-btn dock-chat-btn"
-          class:visible={dockStore.expanded}
-          aria-label="Mở Chat nhanh cạnh ứng dụng"
-          title="Mở Chat nhanh cạnh ứng dụng"
-          onclick={() => onToggleChat?.()}
-        >
-          ✧
-        </button>
-      {/if}
       <button
         type="button"
         class="dock-ctrl-btn"
@@ -330,7 +318,7 @@
     {/if}
   </header>
 
-  {#if activeTab && activeTab.url}
+  {#if activeTab && activeTab.kind !== 'native-app' && activeTab.url}
     <div class="dock-subbar">
       <div class="dock-subbar-meta">
         <span class="dock-subbar-title">{activeTab.title}</span>
@@ -435,7 +423,15 @@
           role="tabpanel"
           aria-hidden={!isActive}
         >
-          {#if !tab.url && app && (app.kind === 'google-doc' || app.kind === 'google-sheet')}
+          {#if tab.kind === 'native-app' && tab.nativeAppId === 'theon'}
+            {#if dockStore.isHydrated(tab.id)}
+              <TheonStage active={isActive && dockStore.open} />
+            {:else}
+              <div class="dock-dormant">
+                <p>Theon đang chờ kích hoạt…</p>
+              </div>
+            {/if}
+          {:else if !tab.url && app && (app.kind === 'google-doc' || app.kind === 'google-sheet')}
             {@const libDocs = matchingLibraryDocs(app.kind)}
             {@const fileKind = app.kind === 'google-sheet' ? 'spreadsheets' : 'document'}
             {@const isCreating = creatingTabId === tab.id}
@@ -786,20 +782,6 @@
   .dock-ctrl-btn.active {
     background: #d7e5fb;
     color: #174ea6;
-  }
-
-  .dock-chat-btn {
-    display: none;
-  }
-
-  .dock-chat-btn.visible {
-    display: grid;
-  }
-
-  @media (max-width: 800px) {
-    .dock-chat-btn {
-      display: grid;
-    }
   }
 
   .dock-launcher {

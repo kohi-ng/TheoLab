@@ -5,7 +5,8 @@
 import type { OwnerVaultData } from '../../core/secretsVault';
 
 export type AppCategoryId = 'google' | 'stem' | 'tools';
-export type AppKind = 'iframe' | 'google-doc' | 'google-sheet' | 'google-calendar';
+export type AppKind = 'iframe' | 'google-doc' | 'google-sheet' | 'google-calendar' | 'native';
+export type NativeAppId = 'theon';
 export type GoogleEmbedMode = 'edit' | 'preview';
 
 export interface AppCategory {
@@ -21,6 +22,7 @@ export interface AppDefinition {
   icon: string;
   description: string;
   kind: AppKind;
+  nativeAppId?: NativeAppId;
   defaultUrl: string;
   vaultOverrideKey?: keyof Pick<OwnerVaultData, 'calendarEmbedUrl' | 'jupyterLiteUrl' | 'ketcherUrl' | 'desmosUrl'>;
   externalCreateUrl?: string;
@@ -32,8 +34,9 @@ export interface AppDefinition {
 
 export interface DockTab {
   id: string;
-  kind: 'app' | 'library-doc' | 'custom-url';
+  kind: 'app' | 'library-doc' | 'custom-url' | 'native-app';
   appId?: string;
+  nativeAppId?: NativeAppId;
   libraryItemId?: string;
   title: string;
   icon: string;
@@ -223,6 +226,19 @@ export const APP_CATALOG: readonly AppDefinition[] = Object.freeze([
     externalHomeUrl: 'https://molview.org/',
     sandbox: EXTERNAL_APP_SANDBOX,
     allow: 'fullscreen',
+    allowMultiple: false,
+  },
+  {
+    id: 'theon',
+    name: 'Theon (Planar AI)',
+    shortName: 'Theon',
+    category: 'tools',
+    icon: '◈',
+    description: 'Nhân dạng 3D Theon mở thành ô bên khung phải, trả lời trực tiếp bằng hiệu ứng ma trận chữ.',
+    kind: 'native',
+    nativeAppId: 'theon',
+    defaultUrl: '',
+    sandbox: '',
     allowMultiple: false,
   },
   {
@@ -432,18 +448,33 @@ export function parsePersistedDockState(raw: string | null): PersistedDockState 
       const url = typeof candidate.url === 'string' ? candidate.url : '';
       if (!id || !title || !isSafeTabUrl(url)) continue;
 
-      const kind = candidate.kind === 'library-doc' || candidate.kind === 'custom-url' ? candidate.kind : 'app';
+      const kind: DockTab['kind'] =
+        candidate.kind === 'library-doc' ||
+        candidate.kind === 'custom-url' ||
+        candidate.kind === 'native-app'
+          ? candidate.kind
+          : 'app';
+
+      const nativeAppId: NativeAppId | undefined =
+        candidate.nativeAppId === 'theon' ? 'theon' : undefined;
+      if (kind === 'native-app' && !nativeAppId) continue;
+
       const sandbox =
-        candidate.sandbox === WIDGET_SANDBOX ? WIDGET_SANDBOX : EXTERNAL_APP_SANDBOX;
+        kind === 'native-app'
+          ? ''
+          : candidate.sandbox === WIDGET_SANDBOX
+            ? WIDGET_SANDBOX
+            : EXTERNAL_APP_SANDBOX;
 
       validTabs.push({
         id,
         kind,
         appId: typeof candidate.appId === 'string' ? candidate.appId : undefined,
+        nativeAppId,
         libraryItemId: typeof candidate.libraryItemId === 'string' ? candidate.libraryItemId : undefined,
         title: title.slice(0, 80),
         icon: typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon.slice(0, 4) : '⊞',
-        url,
+        url: kind === 'native-app' ? '' : url,
         sourceUrl: typeof candidate.sourceUrl === 'string' && isSafeTabUrl(candidate.sourceUrl) ? candidate.sourceUrl : undefined,
         googleMode: candidate.googleMode === 'preview' ? 'preview' : candidate.googleMode === 'edit' ? 'edit' : undefined,
         sandbox,

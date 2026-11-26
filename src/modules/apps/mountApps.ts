@@ -20,11 +20,10 @@ export function mountWorkspaceDock(
   target: HTMLElement,
   {
     onToast,
-    onToggleChat,
-  }: { onToast?: (message: string) => void; onToggleChat?: () => void } = {},
+  }: { onToast?: (message: string) => void } = {},
 ): () => void {
   target.replaceChildren();
-  const instance = mount(WorkspaceDock, { target, props: { onToast, onToggleChat } });
+  const instance = mount(WorkspaceDock, { target, props: { onToast } });
   const offToast = onToast ? dockStore.onToast(onToast) : () => {};
   return () => {
     offToast();
