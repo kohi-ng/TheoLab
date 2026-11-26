@@ -3,10 +3,11 @@
  * for the TheoLab right-pane Multi-Tab Dock.
  */
 import type { OwnerVaultData } from '../../core/secretsVault';
+import { parseExerciseTabPayload, type ExerciseTabPayload } from '../theon/exerciseSchema';
 
 export type AppCategoryId = 'google' | 'stem' | 'tools';
 export type AppKind = 'iframe' | 'google-doc' | 'google-sheet' | 'google-calendar' | 'native';
-export type NativeAppId = 'theon';
+export type NativeAppId = 'theon' | 'exercise';
 export type GoogleEmbedMode = 'edit' | 'preview';
 
 export interface AppCategory {
@@ -37,6 +38,7 @@ export interface DockTab {
   kind: 'app' | 'library-doc' | 'custom-url' | 'native-app';
   appId?: string;
   nativeAppId?: NativeAppId;
+  exercisePayload?: ExerciseTabPayload;
   libraryItemId?: string;
   title: string;
   icon: string;
@@ -456,8 +458,16 @@ export function parsePersistedDockState(raw: string | null): PersistedDockState 
           : 'app';
 
       const nativeAppId: NativeAppId | undefined =
-        candidate.nativeAppId === 'theon' ? 'theon' : undefined;
+        candidate.nativeAppId === 'theon' || candidate.nativeAppId === 'exercise'
+          ? candidate.nativeAppId
+          : undefined;
       if (kind === 'native-app' && !nativeAppId) continue;
+
+      const exercisePayload =
+        kind === 'native-app' && nativeAppId === 'exercise'
+          ? (parseExerciseTabPayload(candidate.exercisePayload) ?? undefined)
+          : undefined;
+      if (kind === 'native-app' && nativeAppId === 'exercise' && !exercisePayload) continue;
 
       const sandbox =
         kind === 'native-app'
@@ -471,6 +481,7 @@ export function parsePersistedDockState(raw: string | null): PersistedDockState 
         kind,
         appId: typeof candidate.appId === 'string' ? candidate.appId : undefined,
         nativeAppId,
+        exercisePayload,
         libraryItemId: typeof candidate.libraryItemId === 'string' ? candidate.libraryItemId : undefined,
         title: title.slice(0, 80),
         icon: typeof candidate.icon === 'string' && candidate.icon.trim() ? candidate.icon.slice(0, 4) : '⊞',

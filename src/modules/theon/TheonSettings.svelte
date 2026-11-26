@@ -15,6 +15,7 @@
     type TheonMatrixSpeed,
     type TheonProvider,
   } from './theonConfig';
+  import { THEON_SKILLS, type TheonSkillId } from './theonSkills';
   import { theonStore } from './theonStore.svelte';
 
   let { onToast }: { onToast?: (message: string) => void } = $props();
@@ -24,6 +25,23 @@
   const selectedPreset = $derived(
     presets.some((item) => item.id === settings.model) ? settings.model : '__custom__',
   );
+
+  function toggleTheonSkill(skillId: TheonSkillId, checked: boolean) {
+    const current = new Set(settings.enabledSkills);
+    if (checked) current.add(skillId);
+    else current.delete(skillId);
+    theonStore.updateSettings({ enabledSkills: [...current] });
+  }
+
+  function handleMcpAllowlistChange(event: Event) {
+    const raw = (event.currentTarget as HTMLInputElement).value;
+    const tools = raw
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+      .slice(0, 30);
+    theonStore.updateSettings({ mcpAllowedTools: tools });
+  }
 
   const keyReadyNote = $derived.by(() => {
     if (settings.provider === 'vertex') {
@@ -280,6 +298,49 @@
     />
   </div>
 
+  <div class="theon-subsection">
+    <strong>Skills của Theon Multiagent</strong>
+    {#each THEON_SKILLS as skill (skill.id)}
+      <div class="setting-row">
+        <label for={`theon-skill-${skill.id}`}>
+          <span>{skill.name}</span>
+          <small class="theon-skill-desc">{skill.summary}</small>
+        </label>
+        <input
+          id={`theon-skill-${skill.id}`}
+          type="checkbox"
+          checked={settings.enabledSkills.includes(skill.id)}
+          onchange={(e) => toggleTheonSkill(skill.id, (e.currentTarget as HTMLInputElement).checked)}
+        />
+      </div>
+    {/each}
+  </div>
+
+  <div class="theon-subsection">
+    <div class="setting-row">
+      <label for="theon-mcp-enabled">Bật cầu nối MCP cho Theon (chỉ gọi tool trong allowlist)</label>
+      <input
+        id="theon-mcp-enabled"
+        type="checkbox"
+        checked={settings.mcpEnabled}
+        onchange={(e) => {
+          theonStore.updateSettings({ mcpEnabled: (e.currentTarget as HTMLInputElement).checked });
+        }}
+      />
+    </div>
+    {#if settings.mcpEnabled}
+      <label for="theon-mcp-allowlist">Danh sách tên tool MCP cho phép (phân cách bằng dấu phẩy)</label>
+      <input
+        id="theon-mcp-allowlist"
+        class="text-input"
+        type="text"
+        value={settings.mcpAllowedTools.join(', ')}
+        placeholder="VD: search_docs, calc_stoichiometry"
+        onchange={handleMcpAllowlistChange}
+      />
+    {/if}
+  </div>
+
   <div class="theon-settings-actions">
     <button type="button" class="button button-soft" onclick={handleClearHistory}>
       Xóa lịch sử Theon ({Math.floor(theonStore.history.length / 2)} lượt)
@@ -307,6 +368,23 @@
   .theon-range {
     width: 100%;
     accent-color: var(--accent-solid);
+  }
+
+  .theon-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: var(--surface-elevated);
+  }
+
+  .theon-skill-desc {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
   }
 
   .theon-settings-actions {

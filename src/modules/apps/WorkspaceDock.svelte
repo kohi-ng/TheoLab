@@ -13,6 +13,7 @@
   import { saveOwnerVault } from '../../core/secretsVault';
   import { createGoogleWorkspaceFile, type NewGoogleFileKind } from '../../core/googleDriveApi';
   import TheonStage from '../theon/TheonStage.svelte';
+  import ExerciseTab from '../theon/ExerciseTab.svelte';
 
   let {
     onToast,
@@ -429,6 +430,14 @@
             {:else}
               <div class="dock-dormant">
                 <p>Theon đang chờ kích hoạt…</p>
+              </div>
+            {/if}
+          {:else if tab.kind === 'native-app' && tab.nativeAppId === 'exercise' && tab.exercisePayload}
+            {#if dockStore.isHydrated(tab.id)}
+              <ExerciseTab payload={tab.exercisePayload} />
+            {:else}
+              <div class="dock-dormant">
+                <p>Bài tập đang chờ kích hoạt…</p>
               </div>
             {/if}
           {:else if !tab.url && app && (app.kind === 'google-doc' || app.kind === 'google-sheet')}

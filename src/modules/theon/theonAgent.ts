@@ -1,7 +1,7 @@
 /**
- * Theon Agent runtime — dedicated AI provider bridge with multi-provider
- * function calling (starting with `set_expression` so the agent controls
- * Theon's 3D facial expressions).
+ * Theon the Multiagent runtime — multi-step tool-calling orchestrator
+ * supporting Vertex AI, Google AI Studio, OpenAI, OpenRouter, Custom,
+ * and Anthropic with dynamic tool schema translation.
  */
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../../config/runtimeConfig.js';
 import { getActiveContext } from '../../core/contextBus.js';
@@ -13,7 +13,13 @@ import {
   type TheonExpression,
   type TheonSettings,
 } from './theonConfig';
-import { executeTheonTool, THEON_TOOL_SPECS, type TheonToolHandlers } from './theonTools';
+import { formatEnabledSkillsCatalog } from './theonSkills';
+import {
+  executeTheonTool,
+  getActiveTheonToolSpecs,
+  type TheonToolHandlers,
+  type TheonToolSpec,
+} from './theonTools';
 
 export interface TheonMessage {
   role: 'user' | 'assistant';
@@ -23,19 +29,25 @@ export interface TheonMessage {
 export interface TheonTurnResult {
   reply: string;
   expression: TheonExpression;
-  toolUsed: boolean;
+  toolsCalled: string[];
 }
 
-const MAX_TOOL_STEPS = 3;
+const MAX_TOOL_STEPS = 6;
 const DEFAULT_VERTEX_MODEL = 'gemini-3.8-flash';
 const RETIRED_VERTEX_MODELS = /^gemini-(2\.|3\.6)/;
 
 function buildSystemInstruction(settings: TheonSettings): string {
   const parts: string[] = [
     settings.systemPrompt.trim() ||
-      'Bạn là Theon — nhân dạng AI học tập trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng.',
+      'Bạn là Theon — hệ thống đa tác nhân học tập trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng.',
     `Biểu cảm hợp lệ cho hàm set_expression: ${THEON_EXPRESSIONS.join(', ')}.`,
+    'Danh mục Skill đang bật (gọi `read_skill` để xem hướng dẫn chi tiết & mẫu JSON khi cần):',
+    formatEnabledSkillsCatalog(settings.enabledSkills),
   ];
+
+  if (settings.mcpEnabled && settings.mcpAllowedTools.length > 0) {
+    parts.push(`Các công cụ MCP được phép gọi qua call_mcp_tool: ${settings.mcpAllowedTools.join(', ')}.`);
+  }
 
   if (settings.autoContext) {
     const ctx = getActiveContext() as {
@@ -75,12 +87,59 @@ function resolveProviderKey(provider: TheonSettings['provider']): string {
   return getApiKey(provider) || '';
 }
 
+function toVertexSchema(
+  node: Record<string, unknown>,
+  SchemaType: Record<string, string>,
+): Record<string, unknown> {
+  const rawType = String(node.type ?? 'string').toLowerCase();
+  const typeMap: Record<string, string> = {
+    object: SchemaType.OBJECT ?? 'object',
+    array: SchemaType.ARRAY ?? 'array',
+    string: SchemaType.STRING ?? 'string',
+    number: SchemaType.NUMBER ?? 'number',
+    integer: SchemaType.INTEGER ?? 'integer',
+    boolean: SchemaType.BOOLEAN ?? 'boolean',
+  };
+  const out: Record<string, unknown> = {
+    type: typeMap[rawType] ?? SchemaType.STRING ?? 'string',
+  };
+  if (typeof node.description === 'string') out.description = node.description;
+  if (Array.isArray(node.enum)) {
+    out.format = 'enum';
+    out.enum = node.enum;
+  }
+  if (rawType === 'object' && node.properties && typeof node.properties === 'object') {
+    const props: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(node.properties as Record<string, Record<string, unknown>>)) {
+      props[key] = toVertexSchema(val, SchemaType);
+    }
+    out.properties = props;
+    if (Array.isArray(node.required) && node.required.length > 0) {
+      out.required = node.required;
+    }
+  }
+  if (rawType === 'array' && node.items && typeof node.items === 'object') {
+    out.items = toVertexSchema(node.items as Record<string, unknown>, SchemaType);
+  }
+  return out;
+}
+
+function safeResponseText(response: { text?: () => string }): string {
+  try {
+    return response.text?.() ?? '';
+  } catch {
+    return '';
+  }
+}
+
 async function callVertexWithTools(
   prompt: string,
   history: readonly TheonMessage[],
   settings: TheonSettings,
   system: string,
+  toolSpecs: readonly TheonToolSpec[],
   handlers: TheonToolHandlers,
+  toolsCalled: string[],
 ): Promise<string> {
   if (APP_MODE !== 'firebase_auth' || !isFirebaseConfigured()) {
     throw new Error('Vertex AI (Firebase AI Logic) yêu cầu chế độ firebase_auth và đã đăng nhập Gmail chủ sở hữu.');
@@ -96,36 +155,20 @@ async function callVertexWithTools(
   const ai = getAI(app, { backend: new VertexAIBackend(vault.vertexLocation || 'global') });
   const modelName = RETIRED_VERTEX_MODELS.test(settings.model) ? DEFAULT_VERTEX_MODEL : settings.model;
 
-  const setExprSpec = THEON_TOOL_SPECS[0];
-  const tools: import('firebase/ai').FunctionDeclarationsTool[] | undefined =
-    settings.autoExpression && setExprSpec
-      ? [
-          {
-            functionDeclarations: [
-              {
-                name: 'set_expression',
-                description: setExprSpec.description,
-                parameters: {
-                  type: SchemaType.OBJECT as typeof SchemaType.OBJECT,
-                  properties: {
-                    expression: {
-                      type: SchemaType.STRING as typeof SchemaType.STRING,
-                      format: 'enum',
-                      enum: [...THEON_EXPRESSIONS],
-                      description: 'Biểu cảm khuôn mặt 3D của Theon.',
-                    },
-                    reason: {
-                      type: SchemaType.STRING as typeof SchemaType.STRING,
-                      description: 'Lý do ngắn gọn (tùy chọn).',
-                    },
-                  },
-                  required: ['expression'],
-                } as import('firebase/ai').ObjectSchemaInterface,
-              },
-            ],
-          },
-        ]
-      : undefined;
+  const tools: import('firebase/ai').FunctionDeclarationsTool[] | undefined = toolSpecs.length
+    ? [
+        {
+          functionDeclarations: toolSpecs.map((spec) => ({
+            name: spec.name,
+            description: spec.description,
+            parameters: toVertexSchema(
+              spec.parameters as unknown as Record<string, unknown>,
+              SchemaType as unknown as Record<string, string>,
+            ) as unknown as import('firebase/ai').ObjectSchemaInterface,
+          })),
+        },
+      ]
+    : undefined;
 
   const model = getGenerativeModel(ai, {
     model: modelName || DEFAULT_VERTEX_MODEL,
@@ -146,30 +189,22 @@ async function callVertexWithTools(
     const calls = response.functionCalls?.();
     if (!calls || calls.length === 0) break;
 
-    const toolResponses = calls.map((call) => {
-      const outcome = executeTheonTool(call.name, call.args, handlers);
-      return {
+    const toolResponses = [];
+    for (const call of calls) {
+      toolsCalled.push(call.name);
+      const outcome = await executeTheonTool(call.name, call.args, handlers);
+      toolResponses.push({
         functionResponse: {
           name: call.name,
           response: outcome.ok ? (outcome.result ?? { ok: true }) : { error: outcome.error },
         },
-      };
-    });
+      });
+    }
 
-    const textSoFar = safeResponseText(response);
-    if (textSoFar.trim()) return textSoFar.trim();
     response = (await chat.sendMessage(toolResponses)).response;
   }
 
-  return safeResponseText(response).trim() || 'Theon chưa nhận được nội dung phản hồi.';
-}
-
-function safeResponseText(response: { text?: () => string }): string {
-  try {
-    return response.text?.() ?? '';
-  } catch {
-    return '';
-  }
+  return safeResponseText(response).trim() || 'Theon đã hoàn tất tác vụ.';
 }
 
 async function callGoogleStudioWithTools(
@@ -178,7 +213,9 @@ async function callGoogleStudioWithTools(
   settings: TheonSettings,
   system: string,
   apiKey: string,
+  toolSpecs: readonly TheonToolSpec[],
   handlers: TheonToolHandlers,
+  toolsCalled: string[],
 ): Promise<string> {
   const contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> = [
     ...history.slice(-10).map((msg) => ({
@@ -188,10 +225,10 @@ async function callGoogleStudioWithTools(
     { role: 'user', parts: [{ text: prompt }] },
   ];
 
-  const toolsPayload = settings.autoExpression
+  const toolsPayload = toolSpecs.length
     ? [
         {
-          functionDeclarations: THEON_TOOL_SPECS.map((spec) => ({
+          functionDeclarations: toolSpecs.map((spec) => ({
             name: spec.name,
             description: spec.description,
             parameters: spec.parameters,
@@ -226,13 +263,14 @@ async function callGoogleStudioWithTools(
     const fnCalls = parts.filter((part) => part.functionCall && typeof part.functionCall === 'object');
 
     if (fnCalls.length === 0) {
-      return textParts.trim() || 'Mô hình không trả về nội dung.';
+      return textParts.trim() || 'Theon đã hoàn tất tác vụ.';
     }
 
     const responseParts: Array<Record<string, unknown>> = [];
     for (const part of fnCalls) {
       const call = part.functionCall as { name: string; args?: unknown };
-      const outcome = executeTheonTool(call.name, call.args, handlers);
+      toolsCalled.push(call.name);
+      const outcome = await executeTheonTool(call.name, call.args, handlers);
       responseParts.push({
         functionResponse: {
           name: call.name,
@@ -241,13 +279,11 @@ async function callGoogleStudioWithTools(
       });
     }
 
-    if (textParts.trim()) return textParts.trim();
-
     contents.push({ role: 'model', parts });
     contents.push({ role: 'user', parts: responseParts });
   }
 
-  return 'Mô hình không trả về nội dung sau khi gọi hàm.';
+  return 'Theon đã hoàn tất các bước xử lý.';
 }
 
 async function callOpenAiCompatibleWithTools(
@@ -258,7 +294,9 @@ async function callOpenAiCompatibleWithTools(
   settings: TheonSettings,
   system: string,
   apiKey: string,
+  toolSpecs: readonly TheonToolSpec[],
   handlers: TheonToolHandlers,
+  toolsCalled: string[],
 ): Promise<string> {
   const messages: Array<Record<string, unknown>> = [
     { role: 'system', content: system },
@@ -266,8 +304,8 @@ async function callOpenAiCompatibleWithTools(
     { role: 'user', content: prompt },
   ];
 
-  const toolsPayload = settings.autoExpression
-    ? THEON_TOOL_SPECS.map((spec) => ({
+  const toolsPayload = toolSpecs.length
+    ? toolSpecs.map((spec) => ({
         type: 'function',
         function: {
           name: spec.name,
@@ -298,7 +336,6 @@ async function callOpenAiCompatibleWithTools(
       body: JSON.stringify(requestBody),
     });
 
-    // Some custom OpenAI-compatible endpoints reject `tools`; retry cleanly without tools.
     if (!response.ok && allowTools && response.status === 400) {
       allowTools = false;
       delete requestBody.tools;
@@ -319,7 +356,7 @@ async function callOpenAiCompatibleWithTools(
     const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
 
     if (toolCalls.length === 0) {
-      return content || 'Mô hình không trả về nội dung.';
+      return content || 'Theon đã hoàn tất tác vụ.';
     }
 
     messages.push({
@@ -330,18 +367,17 @@ async function callOpenAiCompatibleWithTools(
 
     for (const tc of toolCalls as Array<{ id?: string; function?: { name?: string; arguments?: string } }>) {
       const fnName = tc.function?.name ?? '';
-      const outcome = executeTheonTool(fnName, tc.function?.arguments ?? '{}', handlers);
+      toolsCalled.push(fnName);
+      const outcome = await executeTheonTool(fnName, tc.function?.arguments ?? '{}', handlers);
       messages.push({
         role: 'tool',
         tool_call_id: tc.id ?? `call_${step}`,
         content: JSON.stringify(outcome.ok ? (outcome.result ?? { ok: true }) : { error: outcome.error }),
       });
     }
-
-    if (content) return content;
   }
 
-  return 'Mô hình không trả về nội dung.';
+  return 'Theon đã hoàn tất các bước xử lý.';
 }
 
 async function callAnthropicWithTools(
@@ -350,15 +386,17 @@ async function callAnthropicWithTools(
   settings: TheonSettings,
   system: string,
   apiKey: string,
+  toolSpecs: readonly TheonToolSpec[],
   handlers: TheonToolHandlers,
+  toolsCalled: string[],
 ): Promise<string> {
   const messages: Array<{ role: string; content: unknown }> = [
     ...history.slice(-10).map((msg) => ({ role: msg.role, content: msg.content })),
     { role: 'user', content: prompt },
   ];
 
-  const toolsPayload = settings.autoExpression
-    ? THEON_TOOL_SPECS.map((spec) => ({
+  const toolsPayload = toolSpecs.length
+    ? toolSpecs.map((spec) => ({
         name: spec.name,
         description: spec.description,
         input_schema: spec.parameters,
@@ -376,7 +414,7 @@ async function callAnthropicWithTools(
       },
       body: JSON.stringify({
         model: settings.model,
-        max_tokens: 1200,
+        max_tokens: 1600,
         temperature: Math.max(0, Math.min(1, settings.temperature)),
         system,
         ...(toolsPayload ? { tools: toolsPayload } : {}),
@@ -394,13 +432,14 @@ async function callAnthropicWithTools(
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
 
     if (toolUses.length === 0) {
-      return text || 'Mô hình không trả về nội dung.';
+      return text || 'Theon đã hoàn tất tác vụ.';
     }
 
     const toolResults: Array<Record<string, unknown>> = [];
     for (const block of toolUses) {
       const fnName = String(block.name ?? '');
-      const outcome = executeTheonTool(fnName, block.input, handlers);
+      toolsCalled.push(fnName);
+      const outcome = await executeTheonTool(fnName, block.input, handlers);
       toolResults.push({
         type: 'tool_result',
         tool_use_id: String(block.id ?? ''),
@@ -408,32 +447,27 @@ async function callAnthropicWithTools(
       });
     }
 
-    if (text) return text;
     messages.push({ role: 'assistant', content: blocks });
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return 'Mô hình không trả về nội dung.';
+  return 'Theon đã hoàn tất các bước xử lý.';
 }
 
-/**
- * Runs one conversational turn with Theon using the model & provider
- * configured in the Theon Settings section.
- */
 export async function runTheonTurn({
   prompt,
   history = [],
   settings,
-  onExpression,
+  handlers: extraHandlers,
 }: {
   prompt: string;
   history?: readonly TheonMessage[];
   settings: TheonSettings;
-  onExpression?: (expr: TheonExpression) => void;
+  handlers: Omit<TheonToolHandlers, 'settings'>;
 }): Promise<TheonTurnResult> {
   const cleanPrompt = prompt.trim();
   if (!cleanPrompt) {
-    return { reply: '', expression: settings.defaultExpression, toolUsed: false };
+    return { reply: '', expression: settings.defaultExpression, toolsCalled: [] };
   }
 
   const provider = settings.provider;
@@ -443,22 +477,33 @@ export async function runTheonTurn({
   }
 
   const system = buildSystemInstruction(settings);
+  const toolSpecs = getActiveTheonToolSpecs(settings);
+  const toolsCalled: string[] = [];
   let chosenExpression: TheonExpression | null = null;
-  let toolUsed = false;
 
   const handlers: TheonToolHandlers = {
-    onSetExpression: (expr) => {
+    ...extraHandlers,
+    settings,
+    onSetExpression: (expr, reason) => {
       chosenExpression = expr;
-      toolUsed = true;
-      onExpression?.(expr);
+      extraHandlers.onSetExpression(expr, reason);
     },
   };
 
   let reply = '';
   if (provider === 'vertex') {
-    reply = await callVertexWithTools(cleanPrompt, history, settings, system, handlers);
+    reply = await callVertexWithTools(cleanPrompt, history, settings, system, toolSpecs, handlers, toolsCalled);
   } else if (provider === 'google') {
-    reply = await callGoogleStudioWithTools(cleanPrompt, history, settings, system, apiKey, handlers);
+    reply = await callGoogleStudioWithTools(
+      cleanPrompt,
+      history,
+      settings,
+      system,
+      apiKey,
+      toolSpecs,
+      handlers,
+      toolsCalled,
+    );
   } else if (provider === 'openai') {
     reply = await callOpenAiCompatibleWithTools(
       'https://api.openai.com/v1/chat/completions',
@@ -468,7 +513,9 @@ export async function runTheonTurn({
       settings,
       system,
       apiKey,
+      toolSpecs,
       handlers,
+      toolsCalled,
     );
   } else if (provider === 'openrouter') {
     reply = await callOpenAiCompatibleWithTools(
@@ -479,7 +526,9 @@ export async function runTheonTurn({
       settings,
       system,
       apiKey,
+      toolSpecs,
       handlers,
+      toolsCalled,
     );
   } else if (provider === 'custom') {
     const endpoint = getLocalSetting('custom-endpoint', '');
@@ -494,10 +543,21 @@ export async function runTheonTurn({
       settings,
       system,
       apiKey,
+      toolSpecs,
       handlers,
+      toolsCalled,
     );
   } else if (provider === 'anthropic') {
-    reply = await callAnthropicWithTools(cleanPrompt, history, settings, system, apiKey, handlers);
+    reply = await callAnthropicWithTools(
+      cleanPrompt,
+      history,
+      settings,
+      system,
+      apiKey,
+      toolSpecs,
+      handlers,
+      toolsCalled,
+    );
   } else {
     throw new Error(`Provider "${provider}" chưa được hỗ trợ.`);
   }
@@ -507,12 +567,12 @@ export async function runTheonTurn({
     (settings.autoExpression ? detectExpressionFromText(reply) : settings.defaultExpression);
 
   if (!chosenExpression) {
-    onExpression?.(finalExpression);
+    extraHandlers.onSetExpression(finalExpression);
   }
 
   return {
     reply,
     expression: finalExpression,
-    toolUsed,
+    toolsCalled,
   };
 }

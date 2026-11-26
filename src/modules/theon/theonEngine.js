@@ -2214,22 +2214,42 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       ctx.lineTo(245, 225);
       ctx.stroke();
 
-      // Tiêu đề sách
+      // Tiêu đề sách (tự động xuống dòng cho tiêu đề tiếng Việt)
       ctx.fillStyle = '#0f2952';
-      ctx.font = '700 24px "JetBrains Mono", ui-monospace, monospace';
-      ctx.fillText(meta.title, 64, 78);
+      ctx.font = '700 22px "JetBrains Mono", ui-monospace, monospace';
+      const titleWords = String(meta.title || 'THEON').split(/\s+/);
+      let titleLine = '';
+      let ty = 66;
+      const maxTitleW = 222;
+      let lineCount = 0;
+      for (let i = 0; i < titleWords.length; i++) {
+        const test = titleLine ? `${titleLine} ${titleWords[i]}` : titleWords[i];
+        if (ctx.measureText(test).width > maxTitleW && titleLine) {
+          ctx.fillText(titleLine, 64, ty);
+          titleLine = titleWords[i];
+          ty += 26;
+          lineCount++;
+          if (lineCount >= 2) break;
+        } else {
+          titleLine = test;
+        }
+      }
+      if (titleLine && lineCount < 3) {
+        ctx.fillText(titleLine.slice(0, 22), 64, ty);
+      }
 
+      const subY = Math.max(108, ty + 24);
       ctx.fillStyle = '#2563eb';
-      ctx.font = '600 13px "JetBrains Mono", ui-monospace, monospace';
-      ctx.fillText(meta.sub, 64, 108);
+      ctx.font = '600 12px "JetBrains Mono", ui-monospace, monospace';
+      ctx.fillText(String(meta.sub || '').slice(0, 28), 64, subY);
 
       ctx.fillStyle = '#3b82f6';
-      ctx.fillRect(64, 124, 120, 3);
+      ctx.fillRect(64, subY + 14, 120, 3);
 
       // Mã đáy bìa
       ctx.fillStyle = '#476a99';
       ctx.font = '600 12px "JetBrains Mono", ui-monospace, monospace';
-      ctx.fillText(meta.code, 64, 384);
+      ctx.fillText(String(meta.code || 'THEOLAB').slice(0, 24), 64, 384);
       ctx.fillText('THEON ARCHIVE', 64, 402);
 
       const tex = new THREE.CanvasTexture(c);
@@ -2342,11 +2362,20 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       }
     }
 
-    function spawnPlanarBook(customPos = null) {
+    function spawnPlanarBook(optionsOrPos = null) {
       enforceObjectLimit();
 
-      const meta = BOOK_CATALOG[bookCycleIdx % BOOK_CATALOG.length];
+      const isVec = optionsOrPos && typeof optionsOrPos.clone === 'function';
+      const opts = (!isVec && optionsOrPos && typeof optionsOrPos === 'object') ? optionsOrPos : {};
+      const customPos = isVec ? optionsOrPos : (opts.position && typeof opts.position.clone === 'function' ? opts.position : null);
+
+      const fallbackMeta = BOOK_CATALOG[bookCycleIdx % BOOK_CATALOG.length];
       bookCycleIdx++;
+      const meta = {
+        title: opts.title ? String(opts.title).slice(0, 64) : fallbackMeta.title,
+        sub: opts.subtitle ? String(opts.subtitle).slice(0, 48) : fallbackMeta.sub,
+        code: opts.code ? String(opts.code).slice(0, 28) : (opts.actionMeta ? 'NHẤN ĐỂ MỞ' : fallbackMeta.code),
+      };
 
       const W = 0.92, H = 1.26, D = 0.20;
       const revealUniforms = {
@@ -2420,7 +2449,8 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
 
       const obj = {
         kind: 'book',
-        label: `Sách "${meta.title}"`,
+        label: meta.title,
+        actionMeta: opts.actionMeta ?? null,
         group,
         hitMesh: bookMesh,
         edgeMat,
@@ -2431,7 +2461,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         phase: 'materializing',
         matTime: 0,
         matDuration: 1.3,
-        floatLife: 22 + Math.random() * 6, // 22-28 giây lơ lửng
+        floatLife: opts.actionMeta ? 180 : 22 + Math.random() * 6,
         baseY: spawnPos.y,
         bobPhase: Math.random() * Math.PI * 2,
         vel: new THREE.Vector3(),
@@ -2449,11 +2479,18 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       return obj;
     }
 
-    function spawnPlanarNoteCard(customPos = null) {
+    function spawnPlanarNoteCard(optionsOrPos = null) {
       enforceObjectLimit();
 
+      const isVec = optionsOrPos && typeof optionsOrPos.clone === 'function';
+      const opts = (!isVec && optionsOrPos && typeof optionsOrPos === 'object') ? optionsOrPos : {};
+      const customPos = isVec ? optionsOrPos : (opts.position && typeof opts.position.clone === 'function' ? opts.position : null);
+
       let tag, text;
-      if (state.docLines.length > 0 && Math.random() < 0.65) {
+      if (opts.tag || opts.text || opts.label) {
+        tag = String(opts.tag || opts.label || 'THEON // TAG').slice(0, 32);
+        text = String(opts.text || opts.label || '').slice(0, 140);
+      } else if (state.docLines.length > 0 && Math.random() < 0.65) {
         const idx = (state.lineIndex + noteCycleIdx) % state.docLines.length;
         tag = `DOC // LINE ${String(idx + 1).padStart(2, '0')}`;
         text = state.docLines[idx].text;
@@ -2517,7 +2554,8 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
 
       const obj = {
         kind: 'card',
-        label: `Thẻ ghi chú (${tag})`,
+        label: opts.label ? String(opts.label) : tag,
+        actionMeta: opts.actionMeta ?? null,
         group,
         hitMesh: cardMesh,
         edgeMat,
@@ -2528,7 +2566,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         phase: 'materializing',
         matTime: 0,
         matDuration: 1.25,
-        floatLife: 22 + Math.random() * 6, // 22-28 giây lơ lửng
+        floatLife: opts.actionMeta ? 180 : 22 + Math.random() * 6,
         baseY: spawnPos.y,
         bobPhase: Math.random() * Math.PI * 2,
         vel: new THREE.Vector3(),
@@ -3502,6 +3540,18 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
 
     function bindEvents() {
       const canvasEl = container;
+      let pointerDownInfo = null;
+      let lastHoverReported = null;
+
+      function emitHover(obj) {
+        if (lastHoverReported === obj) return;
+        lastHoverReported = obj;
+        if (typeof initialOptions.onObjectHover === 'function') {
+          initialOptions.onObjectHover(
+            obj ? { kind: obj.kind, label: obj.label, actionMeta: obj.actionMeta ?? null } : null,
+          );
+        }
+      }
 
       canvasEl.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 && e.pointerType === 'mouse') return;
@@ -3510,6 +3560,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         if (hit && hit.obj) {
           draggedObj = hit.obj;
           hoveredObj = hit.obj;
+          pointerDownInfo = { x: e.clientX, y: e.clientY, obj: hit.obj, moved: false };
           const dragZ = clamp(draggedObj.group.position.z, -4.4, -1.45);
           dragPlane.set(new THREE.Vector3(0, 0, 1), -dragZ);
           raycaster.setFromCamera(pointerNDC, camera);
@@ -3534,6 +3585,11 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         updatePointerNDC(e);
 
         if (draggedObj) {
+          if (pointerDownInfo && !pointerDownInfo.moved) {
+            const dist = Math.hypot(e.clientX - pointerDownInfo.x, e.clientY - pointerDownInfo.y);
+            if (dist < 7) return;
+            pointerDownInfo.moved = true;
+          }
           raycaster.setFromCamera(pointerNDC, camera);
           if (raycaster.ray.intersectPlane(dragPlane, dragIntersect)) {
             const hw = state.screenW * 0.5 - 0.65;
@@ -3550,26 +3606,47 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         if (renderer && e.target === renderer.domElement) {
           const hit = raycastDynamicObjects();
           hoveredObj = hit ? hit.obj : null;
-          canvasEl.style.cursor = hoveredObj ? 'grab' : 'default';
+          canvasEl.style.cursor = hoveredObj
+            ? (hoveredObj.actionMeta ? 'pointer' : 'grab')
+            : 'default';
+          emitHover(hoveredObj);
         } else {
           hoveredObj = null;
+          emitHover(null);
         }
       }, { passive: true, signal });
 
       const finishDrag = (e) => {
         if (!draggedObj) return;
+        const releasedObj = draggedObj;
+        const wasClick = Boolean(
+          pointerDownInfo &&
+          pointerDownInfo.obj === releasedObj &&
+          !pointerDownInfo.moved &&
+          e &&
+          Math.hypot(e.clientX - pointerDownInfo.x, e.clientY - pointerDownInfo.y) < 7,
+        );
+        pointerDownInfo = null;
+
         const floorY = -SCREEN_H * 0.5;
-        if (draggedObj.group.position.y <= floorY + 0.55) {
-          draggedObj.phase = 'grounded';
+        if (releasedObj.group.position.y <= floorY + 0.55) {
+          releasedObj.phase = 'grounded';
         } else {
-          draggedObj.phase = 'floating';
-          draggedObj.floatLife = 24.0;
-          draggedObj.baseY = draggedObj.group.position.y;
+          releasedObj.phase = 'floating';
+          releasedObj.floatLife = releasedObj.actionMeta ? 180.0 : 24.0;
+          releasedObj.baseY = releasedObj.group.position.y;
         }
         draggedObj = null;
-        canvasEl.style.cursor = hoveredObj ? 'grab' : 'default';
+        canvasEl.style.cursor = hoveredObj
+          ? (hoveredObj.actionMeta ? 'pointer' : 'grab')
+          : 'default';
         if (e && e.pointerId !== undefined && canvasEl.releasePointerCapture) {
           try { canvasEl.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+
+        if (wasClick && releasedObj.actionMeta && typeof initialOptions.onObjectClick === 'function') {
+          triggerNod(0.42);
+          initialOptions.onObjectClick(releasedObj.actionMeta, releasedObj.label);
         }
       };
 
@@ -3580,6 +3657,8 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         if (!draggedObj) {
           state.pointerX = 0;
           state.pointerY = 0;
+          hoveredObj = null;
+          emitHover(null);
         }
       }, { signal });
 

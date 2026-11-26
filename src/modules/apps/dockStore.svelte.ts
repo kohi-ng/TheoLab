@@ -586,6 +586,29 @@ class DockStore {
   toggleTheon() {
     this.setTheonOpen(!this.isTheonOpen);
   }
+
+  openExerciseTab(payload: import('../theon/exerciseSchema').ExerciseTabPayload): DockTab {
+    const tab: DockTab = {
+      id: `tab-exercise-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      kind: 'native-app',
+      appId: 'exercise',
+      nativeAppId: 'exercise',
+      exercisePayload: payload,
+      title: payload.title.slice(0, 64),
+      icon: '✎',
+      url: '',
+      sandbox: '',
+    };
+
+    this.tabs = [...this.tabs, tab];
+    this.activeTabId = tab.id;
+    this.open = true;
+    this.launcherOpen = false;
+    this.hydrateActive();
+    this.persist();
+    this.notifyLayout();
+    return tab;
+  }
 }
 
 export const dockStore = new DockStore();

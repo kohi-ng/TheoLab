@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { TheonEngineController } from './theonEngine.js';
+  import type {
+    TheonEngineController,
+    TheonHoverInfo,
+    TheonObjectActionMeta,
+  } from './theonEngine.js';
+  import { dockStore } from '../apps/dockStore.svelte';
   import { renderMatrixFrame, startMatrixReveal } from './matrixText';
   import { runTheonTurn } from './theonAgent';
   import { theonStore } from './theonStore.svelte';
@@ -16,9 +21,11 @@
   let webglError = $state('');
   let draft = $state('');
   let renderedOutput = $state(theonStore.outputText);
+  let hoverInfo = $state<TheonHoverInfo | null>(null);
 
   let cancelReveal: (() => void) | null = null;
   let thinkingTimer: number | null = null;
+  let thinkingPhrase = 'THEON // ĐANG ĐỌC & PHÂN TÍCH...';
   let requestSeq = 0;
 
   function applySettingsToEngine(settings: TheonSettings) {
@@ -50,15 +57,22 @@
     outputHost.scrollTop = outputHost.scrollHeight;
   }
 
-  function startThinkingMatrix() {
+  function startThinkingMatrix(initialPhrase = 'THEON // ĐANG ĐỌC & PHÂN TÍCH...') {
     stopAnimations();
-    const phrase = 'THEON // ĐANG ĐỌC & PHÂN TÍCH...';
+    thinkingPhrase = initialPhrase;
     let seed = 0;
-    renderedOutput = renderMatrixFrame(phrase, 0.35, seed);
+    renderedOutput = renderMatrixFrame(thinkingPhrase, 0.35, seed);
     thinkingTimer = window.setInterval(() => {
       seed++;
-      renderedOutput = renderMatrixFrame(phrase, 0.25 + ((seed % 6) * 0.08), seed);
+      renderedOutput = renderMatrixFrame(thinkingPhrase, 0.25 + ((seed % 6) * 0.08), seed);
     }, 65);
+  }
+
+  function updateThinkingStep(nextPhrase: string) {
+    thinkingPhrase = nextPhrase;
+    if (controller) {
+      controller.setReadingDocument('THEON // MULTIAGENT', nextPhrase);
+    }
   }
 
   function revealMatrixReply(text: string) {
@@ -79,6 +93,20 @@
     });
   }
 
+  function handleObjectClick(action: TheonObjectActionMeta) {
+    if (action.kind === 'deep-link') {
+      window.dispatchEvent(new CustomEvent('theolab:navigate-deep-link', { detail: action.deepLink }));
+    } else if (action.kind === 'exercise') {
+      dockStore.openExerciseTab(action.payload);
+    } else if (action.kind === 'app') {
+      dockStore.openApp(action.appId, { title: action.title, url: action.url });
+    } else if (action.kind === 'url') {
+      dockStore.openCustomUrl(action.url, action.title);
+    } else if (action.kind === 'formula') {
+      window.dispatchEvent(new CustomEvent('theolab:open-formula'));
+    }
+  }
+
   function autoResizeInput() {
     if (!inputEl) return;
     inputEl.style.height = 'auto';
@@ -97,7 +125,7 @@
     theonStore.expression = 'focused';
 
     if (controller) {
-      controller.setReadingDocument('THEON // PROCESSING', prompt);
+      controller.setReadingDocument('THEON // INPUT', prompt);
       controller.setMode('reading');
       controller.setExpression('focused');
     }
@@ -109,10 +137,40 @@
         prompt,
         history: theonStore.history,
         settings: theonStore.settings,
-        onExpression: (expr) => {
-          if (seq !== requestSeq) return;
-          theonStore.expression = expr;
-          controller?.setExpression(expr);
+        handlers: {
+          onStep: (line) => {
+            if (seq !== requestSeq) return;
+            updateThinkingStep(line);
+          },
+          onSetExpression: (expr) => {
+            if (seq !== requestSeq) return;
+            theonStore.expression = expr;
+            controller?.setExpression(expr);
+          },
+          onSpawnBook: (opts) => {
+            if (seq !== requestSeq) return;
+            controller?.spawnBook(opts);
+          },
+          onSpawnTag: (opts) => {
+            if (seq !== requestSeq) return;
+            controller?.spawnNoteCard(opts);
+          },
+          onOpenExerciseTab: (payload) => {
+            const tab = dockStore.openExerciseTab(payload);
+            return { tabId: tab.id, title: tab.title };
+          },
+          onOpenAppTab: (appId, opts) => {
+            dockStore.openApp(appId, { title: opts?.title, url: opts?.url });
+            return true;
+          },
+          onShowGraph: (visible, mode) => {
+            if (seq !== requestSeq) return;
+            controller?.setPinnedGraph(visible, mode);
+          },
+          onClearObjects: () => {
+            if (seq !== requestSeq) return;
+            controller?.clearObjects();
+          },
         },
       });
 
@@ -164,6 +222,10 @@
           readSpeed: s.readSpeed,
           defaultExpression: s.defaultExpression,
           autoExpression: s.autoExpression,
+          onObjectClick: (action) => handleObjectClick(action),
+          onObjectHover: (info) => {
+            hoverInfo = info;
+          },
           onError: (err) => {
             webglError = err instanceof Error ? err.message : 'Không thể khởi tạo WebGL 3D cho Theon.';
           },
@@ -198,6 +260,11 @@
 <div class="theon-stage">
   <div class="theon-viewport">
     <div class="theon-canvas-host" bind:this={canvasHost}></div>
+    {#if hoverInfo?.actionMeta}
+      <div class="theon-object-hint" aria-live="polite">
+        {hoverInfo.label} · Nhấn để mở
+      </div>
+    {/if}
     {#if webglError}
       <div class="theon-fallback" role="alert">
         <p>{webglError}</p>
@@ -254,6 +321,23 @@
     width: 100%;
     height: 100%;
     display: block;
+  }
+
+  .theon-object-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    padding: 4px 10px;
+    background: rgba(2, 6, 16, 0.86);
+    color: #93c5fd;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 11px;
+    white-space: nowrap;
+    max-width: calc(100% - 24px);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .theon-fallback {

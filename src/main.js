@@ -1278,6 +1278,9 @@ window.addEventListener('theolab:open-settings', () => {
   renderSettings();
   setDrawer(false);
 });
+window.addEventListener('theolab:open-formula', () => {
+  showFormulas().catch((error) => toast(error.message));
+});
 window.addEventListener('theolab:navigate-deep-link', async (event) => {
   const deepLink = event.detail;
   if (typeof deepLink !== 'string') return;

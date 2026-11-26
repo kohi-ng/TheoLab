@@ -96,8 +96,10 @@ export const THEON_MODEL_PRESETS: Record<TheonProvider, readonly ModelPreset[]> 
 export const THEON_MATRIX_SPEEDS = ['fast', 'medium', 'slow'] as const;
 export type TheonMatrixSpeed = (typeof THEON_MATRIX_SPEEDS)[number];
 
+import { THEON_SKILL_IDS, type TheonSkillId } from './theonSkills';
+
 export const DEFAULT_THEON_SYSTEM_PROMPT =
-  'Bạn là Theon — nhân dạng AI học tập trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo và đi thẳng vào trọng tâm. Khi thích hợp hãy gọi hàm set_expression để chọn biểu cảm khuôn mặt phù hợp với câu trả lời.';
+  'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
 
 export const TheonSettingsSchema = z.object({
   provider: z.enum(THEON_PROVIDERS),
@@ -113,6 +115,9 @@ export const TheonSettingsSchema = z.object({
   matrixTextSpeed: z.enum(THEON_MATRIX_SPEEDS),
   defaultExpression: z.enum(THEON_EXPRESSIONS),
   autoExpression: z.boolean(),
+  enabledSkills: z.array(z.enum(THEON_SKILL_IDS)).default([...THEON_SKILL_IDS]),
+  mcpEnabled: z.boolean().default(false),
+  mcpAllowedTools: z.array(z.string().min(1).max(80)).max(30).default([]),
 });
 
 export type TheonSettings = z.infer<typeof TheonSettingsSchema>;
@@ -153,6 +158,9 @@ export function createDefaultTheonSettings(): TheonSettings {
     matrixTextSpeed: 'fast',
     defaultExpression: 'friendly',
     autoExpression: true,
+    enabledSkills: [...THEON_SKILL_IDS] as TheonSkillId[],
+    mcpEnabled: false,
+    mcpAllowedTools: [],
   };
 }
 
