@@ -5,6 +5,7 @@
  */
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../config/runtimeConfig.js';
 import { isAllowedDriveUrl } from './secretsVault';
+import { toFirestoreData } from './firestoreData';
 import { slugify } from '../domain/content/ids';
 
 export interface DriveLibraryItem {
@@ -56,10 +57,10 @@ async function persistItems(items: DriveLibraryItem[]): Promise<void> {
   }
   const db = await getDb();
   const { doc, setDoc } = await import('firebase/firestore');
-  await setDoc(doc(db, 'settings', 'library_drive'), {
+  await setDoc(doc(db, 'settings', 'library_drive'), toFirestoreData({
     items,
     updated_at: new Date().toISOString(),
-  });
+  }));
 }
 
 export async function addDriveLibraryItem(input: { title: string; url: string; note?: string }): Promise<DriveLibraryItem> {

@@ -78,6 +78,14 @@ let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
 let unitTitle = 'TheoLab';
+// In firebase_auth mode no data is read or written until the owner has signed in.
+let dataReady = false;
+let dataLoading = false;
+
+function requireData() {
+  if (!dataReady) toast('Hãy đăng nhập Google ở tab Cấu hình và đợi tải dữ liệu.');
+  return dataReady;
+}
 
 function setTitle(title) {
   document.querySelector('#current-title').textContent = title;
@@ -450,6 +458,7 @@ async function openSession(session) {
 }
 
 async function createSession() {
+  if (!requireData()) return;
   const now = new Date().toISOString();
   const provider = getLocalSetting('provider', 'google');
   const defaultModel = defaultModels[provider] ?? defaultModels.google;
@@ -1050,6 +1059,7 @@ async function sendQuickMessage(prompt, preferences) {
 }
 
 function handleTab(tab) {
+  if (tab.id !== 'settings' && !requireData()) return;
   selectedTab = tab.label;
   setTitle(tab.label);
   updateContext({ activeTab: tab.label });
@@ -1098,7 +1108,7 @@ document.addEventListener('click', (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (action === 'drawer') toggleSidebar();
   if (action === 'open-settings') window.dispatchEvent(new CustomEvent('theolab:open-settings'));
-  if (action === 'chat') setQuickChat(!quickChatOpen);
+  if (action === 'chat' && requireData()) setQuickChat(!quickChatOpen);
   if (action === 'formula') showFormulas();
   if (action === 'palette') window.dispatchEvent(new CustomEvent('theolab:open-palette'));
   if (action === 'new-session') {
@@ -1144,31 +1154,47 @@ async function start() {
       if (selectedTab === 'Bài học') setTitle(unitTitle);
     }
   });
-  getAuthState((state) => {
-    if (state.authorized) {
-      loadOwnerVault().catch(() => {});
-      listDriveLibraryItems()
-        .then((items) => {
-          driveLibraryItems = items;
-          if (selectedTab === 'Thư viện') renderDrawerView();
-        })
-        .catch(() => {});
-    } else {
+  if (APP_MODE === 'dev_mock') {
+    await loadData();
+    return;
+  }
+  showSignIn();
+  await getAuthState((state) => {
+    if (!state.authorized) {
       clearVaultCache();
+      return;
     }
-  }).catch(() => {});
-
-  driveLibraryItems = await listDriveLibraryItems();
-  lesson = await loadLesson();
-  lessons = await listLessons();
-  sessions = await listChatSessions();
-  updateContext({
-    lessonId: lesson.id,
-    lessonTitle: lesson.payload.title,
-    activeTab: 'Bài học',
+    loadData().catch((error) => toast(`Không thể tải dữ liệu: ${error.message}`));
   });
-  renderDrawerView();
-  await showLesson();
+}
+
+function showSignIn() {
+  selectedTab = 'Cấu hình';
+  renderNavigation();
+  renderSettings();
+}
+
+async function loadData() {
+  if (dataReady || dataLoading) return;
+  dataLoading = true;
+  try {
+    await loadOwnerVault().catch((error) => toast(`Không thể mở Vault: ${error.message}`));
+    driveLibraryItems = await listDriveLibraryItems();
+    lesson = await loadLesson();
+    lessons = await listLessons();
+    sessions = await listChatSessions();
+    dataReady = true;
+    selectedTab = 'Bài học';
+    updateContext({
+      lessonId: lesson.id,
+      lessonTitle: lesson.payload.title,
+      activeTab: 'Bài học',
+    });
+    renderDrawerView();
+    await showLesson();
+  } finally {
+    dataLoading = false;
+  }
 }
 
 start().catch((error) => toast(`Không thể khởi động TheoLab: ${error.message}`));

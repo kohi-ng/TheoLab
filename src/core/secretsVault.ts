@@ -7,6 +7,7 @@
  *   Firestore Rules). Cached in memory only for the active session and cleared on sign-out.
  */
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../config/runtimeConfig.js';
+import { toFirestoreData } from './firestoreData';
 
 export interface OwnerVaultData {
   vertexApiKey?: string;
@@ -70,7 +71,7 @@ export async function saveOwnerVault(patch: Partial<OwnerVaultData>): Promise<Ow
   }
   const db = await getDb();
   const { doc, setDoc } = await import('firebase/firestore');
-  await setDoc(doc(db, 'settings', 'secrets'), { ...next, updated_at: new Date().toISOString() });
+  await setDoc(doc(db, 'settings', 'secrets'), toFirestoreData({ ...next, updated_at: new Date().toISOString() }));
   memoryCache = next;
   return { ...next };
 }

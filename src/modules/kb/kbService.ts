@@ -12,6 +12,7 @@
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../../config/runtimeConfig.js';
 import { contentRepo } from '../../core/contentRepository';
+import { toFirestoreData } from '../../core/firestoreData';
 import { getApiKey } from '../../core/dataGateway.js';
 import { getCachedVault } from '../../core/secretsVault';
 import {
@@ -380,7 +381,7 @@ export async function syncAndIndexKb(options: {
     try {
       const { deleteDoc, doc, setDoc } = await import('firebase/firestore');
       for (const chunk of changedForRemote) {
-        await setDoc(doc(db, 'kb_chunks', chunk.id), chunk);
+        await setDoc(doc(db, 'kb_chunks', chunk.id), toFirestoreData(chunk));
       }
       for (const staleId of staleIds) {
         await deleteDoc(doc(db, 'kb_chunks', staleId));

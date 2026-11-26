@@ -11,6 +11,8 @@ export async function ensureAcademyLoaded() {
   if (!initialized) {
     initialized = true;
     await academyStore.init();
+    // Let a later call retry (e.g. after a network or permission error).
+    if (academyStore.error) initialized = false;
   }
 }
 

@@ -1,5 +1,6 @@
 import sampleLesson from '../mocks/sampleLesson.json';
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../config/runtimeConfig.js';
+import { toFirestoreData } from './firestoreData';
 
 const KEY_STORAGE_PREFIX = 'theolab:byok:';
 let firestore;
@@ -26,6 +27,8 @@ export async function loadLesson(lessonId = sampleLesson.id) {
   const db = await getFirestore();
   const { doc, getDoc } = await import('firebase/firestore');
   const snapshot = await getDoc(doc(db, 'lessons', lessonId));
+  // A fresh database has no seed document yet; start from the bundled sample.
+  if (!snapshot.exists() && lessonId === sampleLesson.id) return structuredClone(sampleLesson);
   if (!snapshot.exists()) throw new Error(`Không tìm thấy bài học "${lessonId}".`);
   return { id: snapshot.id, ...snapshot.data() };
 }
@@ -38,7 +41,7 @@ export async function saveLesson(lesson) {
   }
   const db = await getFirestore();
   const { doc, setDoc } = await import('firebase/firestore');
-  await setDoc(doc(db, 'lessons', lesson.id), lesson);
+  await setDoc(doc(db, 'lessons', lesson.id), toFirestoreData(lesson));
   return lesson;
 }
 
@@ -53,6 +56,7 @@ export async function listLessons() {
   const db = await getFirestore();
   const { collection, getDocs } = await import('firebase/firestore');
   const snapshot = await getDocs(collection(db, 'lessons'));
+  if (!snapshot.docs.length) return [structuredClone(sampleLesson)];
   return snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
 }
 
@@ -82,7 +86,7 @@ export async function saveChatSession(session) {
   }
   const db = await getFirestore();
   const { doc, setDoc } = await import('firebase/firestore');
-  await setDoc(doc(db, 'chat_sessions', record.id), record);
+  await setDoc(doc(db, 'chat_sessions', record.id), toFirestoreData(record));
   return record;
 }
 

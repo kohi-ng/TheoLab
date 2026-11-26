@@ -30,6 +30,7 @@ import {
 } from '../domain/content/schemas';
 import { migrateLessonV1, type LessonV1 } from '../domain/content/migrations';
 import { paths } from '../domain/content/ids';
+import { toFirestoreData } from './firestoreData';
 
 export interface ContentBackend {
   list(collectionPath: string): Promise<Record<string, unknown>[]>;
@@ -227,7 +228,7 @@ export function createFirestoreBackend(): ContentBackend {
     async set(docPath, data) {
       const db = await getFirestoreDb();
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, docPath), data);
+      await setDoc(doc(db, docPath), toFirestoreData(data));
     },
     async remove(docPath) {
       const db = await getFirestoreDb();
