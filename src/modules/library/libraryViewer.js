@@ -125,7 +125,32 @@ function googlePreviewUrl(rawUrl, embeddedEdit = false) {
   return `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`;
 }
 
+function resolveViewerType(item) {
+  if (
+    item.kind === 'google-doc'
+    || item.kind === 'google-sheet'
+    || item.kind === 'google-slide'
+    || item.kind === 'drive-file'
+    || (item.source === 'drive' && item.url)
+  ) {
+    return 'google';
+  }
+  return item.type ?? item.kind;
+}
+
+function isDriveFolderItem(item) {
+  if (item.mimeType === 'application/vnd.google-apps.folder') return true;
+  if (!item.url) return false;
+  try {
+    const parsed = new URL(item.url);
+    return parsed.hostname === 'drive.google.com' && parsed.pathname.includes('/folders/');
+  } catch {
+    return false;
+  }
+}
+
 function addToolbar(container, item, onAttach, onOpenInDock) {
+  const viewerType = resolveViewerType(item);
   const toolbar = document.createElement('header');
   toolbar.className = 'document-toolbar';
   const titleGroup = document.createElement('div');
@@ -133,7 +158,7 @@ function addToolbar(container, item, onAttach, onOpenInDock) {
   const title = document.createElement('h1');
   title.textContent = item.title;
   const source = document.createElement('p');
-  source.textContent = item.sourceLabel ?? item.type;
+  source.textContent = item.sourceLabel ?? item.kind ?? item.type ?? '';
   titleGroup.append(title, source);
   const actions = document.createElement('div');
   actions.className = 'document-actions';
@@ -145,7 +170,7 @@ function addToolbar(container, item, onAttach, onOpenInDock) {
     openDock.addEventListener('click', () => onOpenInDock(item));
     actions.append(openDock);
   }
-  if (item.type === 'google' && item.url) {
+  if (viewerType === 'google' && item.url) {
     const open = document.createElement('a');
     open.className = 'button button-soft';
     open.href = item.url;
@@ -161,8 +186,8 @@ function addToolbar(container, item, onAttach, onOpenInDock) {
   attach.addEventListener('click', () => onAttach({
     id: item.id,
     title: item.title,
-    type: item.type,
-    sourceLabel: item.sourceLabel ?? item.type,
+    type: viewerType,
+    sourceLabel: item.sourceLabel ?? item.kind ?? viewerType,
     content: item.contextText ?? '',
   }));
   actions.append(attach);
@@ -171,17 +196,28 @@ function addToolbar(container, item, onAttach, onOpenInDock) {
 }
 
 export async function renderLibraryDocument(container, item, { onAttach, renderFormula, onOpenInDock }) {
+  const viewerType = resolveViewerType(item);
   container.replaceChildren();
   addToolbar(container, item, onAttach, onOpenInDock);
   const body = document.createElement('section');
   body.className = 'document-content';
   container.append(body);
 
-  if (item.type === 'google') {
+  if (viewerType === 'google') {
     const note = document.createElement('p');
     note.className = 'status-line';
-    note.textContent = item.note ?? 'Tài liệu được nhúng từ Google.';
+    note.textContent = item.note ?? item.description ?? 'Tài liệu được liên kết từ Google Drive.';
     body.append(note);
+    if (isDriveFolderItem(item)) {
+      const folderLink = document.createElement('a');
+      folderLink.className = 'library-link';
+      folderLink.href = item.url;
+      folderLink.target = '_blank';
+      folderLink.rel = 'noopener noreferrer';
+      folderLink.textContent = `📁 Mở thư mục "${item.title}" trong Google Drive ↗`;
+      body.append(folderLink);
+      return;
+    }
     const previewUrl = googlePreviewUrl(item.url, Boolean(item.embeddedEdit));
     if (!previewUrl) return;
     const frame = document.createElement('iframe');
@@ -194,7 +230,7 @@ export async function renderLibraryDocument(container, item, { onAttach, renderF
     return;
   }
 
-  if (item.type === 'pdf') {
+  if (viewerType === 'pdf') {
     const frame = document.createElement('iframe');
     frame.className = 'document-frame';
     frame.title = item.title;
@@ -204,7 +240,7 @@ export async function renderLibraryDocument(container, item, { onAttach, renderF
     return;
   }
 
-  if (item.type === 'markdown') {
+  if (viewerType === 'markdown') {
     const markdown = item.content ?? await fetch(publicAssetUrl('docs', item.file)).then((response) => {
       if (!response.ok) throw new Error(`Không thể tải tài liệu (HTTP ${response.status}).`);
       return response.text();
@@ -217,7 +253,7 @@ export async function renderLibraryDocument(container, item, { onAttach, renderF
     return;
   }
 
-  if (item.type === 'json') {
+  if (viewerType === 'json') {
     const json = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
     item.contextText = JSON.stringify(sanitizeLessonJson(json)).slice(0, 16000);
     const pre = document.createElement('pre');
@@ -227,13 +263,13 @@ export async function renderLibraryDocument(container, item, { onAttach, renderF
     return;
   }
 
-  if (item.type === 'formula') {
+  if (viewerType === 'formula') {
     await renderFormula(body);
     item.contextText ||= 'Formula Hub: Ka, Kb, pKa, pKw và phương trình Henderson–Hasselbalch.';
     return;
   }
 
-  if (item.type === 'widget') {
+  if (viewerType === 'widget') {
     renderEmbeddedWidget(item.widget, body);
     item.contextText ||= `Mô phỏng tương tác: ${item.title}.`;
     return;

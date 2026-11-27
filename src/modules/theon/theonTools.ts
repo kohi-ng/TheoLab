@@ -19,6 +19,8 @@ import { getActiveContext } from '../../core/contextBus.js';
 import { getLocalSetting } from '../../core/dataGateway.js';
 import { searchKnowledgeBase } from '../kb/kbService';
 import { LIBRARY_DOCUMENTS } from '../library/libraryCatalog.js';
+import { libraryStore } from '../library/libraryStore.svelte';
+import { foldVietnamese } from '../../domain/library/query';
 import { findAppDefinition, isAllowedAppUrl } from '../apps/appCatalog';
 import { postMcpMessage } from '../agents/mcp/mcpClient.js';
 import { ExerciseTabPayloadSchema, type ExerciseTabPayload } from './exerciseSchema';
@@ -407,20 +409,36 @@ function buildActionMetaFromLinkFields(fields: {
 }
 
 function searchLocalLibraryCatalog(query: string) {
-  const q = query.trim().toLocaleLowerCase('vi');
+  const q = foldVietnamese(query.trim());
   if (!q) return [];
-  return LIBRARY_DOCUMENTS.filter((doc) => {
-    const hay = `${doc.title} ${doc.sourceLabel ?? ''} ${doc.category ?? ''}`.toLocaleLowerCase('vi');
-    return q.split(/\s+/).some((tok) => tok.length >= 2 && hay.includes(tok));
-  })
+  const tokens = q.split(/\s+/).filter((tok) => tok.length >= 2);
+  if (!tokens.length) return [];
+  const items = libraryStore.allItems.length
+    ? libraryStore.allItems
+    : LIBRARY_DOCUMENTS.map((d) => ({
+        id: d.id,
+        title: d.title,
+        kind: d.type,
+        type: d.type,
+        sourceLabel: d.sourceLabel,
+        url: d.url,
+        tags: [] as string[],
+      }));
+  return items
+    .filter((doc) => {
+      const hay = foldVietnamese(
+        `${doc.title} ${doc.sourceLabel ?? ''} ${doc.kind ?? ''} ${(doc.tags ?? []).join(' ')}`,
+      );
+      return tokens.some((tok) => hay.includes(tok));
+    })
     .slice(0, 4)
     .map((doc) => ({
       id: doc.id,
       title: doc.title,
-      type: doc.type,
+      type: doc.kind,
       source: doc.sourceLabel ?? 'Thư viện TheoLab',
       url: doc.url && isAllowedAppUrl(doc.url) ? doc.url : undefined,
-      open_formula: doc.type === 'formula' ? true : undefined,
+      open_formula: doc.kind === 'formula' ? true : undefined,
     }));
 }
 

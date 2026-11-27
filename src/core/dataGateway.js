@@ -138,3 +138,91 @@ export function saveJsonSetting(key, value) {
   if (typeof localStorage === 'undefined') return;
   localStorage.setItem(key, JSON.stringify(value));
 }
+
+function localDocKey(collectionName, id) {
+  return `theolab:doc:${collectionName}/${id}`;
+}
+
+export async function listCollectionDocs(collectionName) {
+  if (APP_MODE === 'dev_mock') {
+    if (typeof localStorage === 'undefined') return [];
+    const prefix = `theolab:doc:${collectionName}/`;
+    const docs = [];
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(prefix)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        docs.push(JSON.parse(raw));
+      } catch {
+        // Skip malformed entry.
+      }
+    }
+    return docs;
+  }
+  const db = await getFirestore();
+  const { collection, getDocs } = await import('firebase/firestore');
+  const snapshot = await getDocs(collection(db, collectionName));
+  return snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+}
+
+export async function getCollectionDoc(collectionName, id) {
+  if (APP_MODE === 'dev_mock') {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(localDocKey(collectionName, id));
+    return raw ? JSON.parse(raw) : null;
+  }
+  const db = await getFirestore();
+  const { doc, getDoc } = await import('firebase/firestore');
+  const snapshot = await getDoc(doc(db, collectionName, id));
+  return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
+
+export async function setCollectionDoc(collectionName, id, data) {
+  if (APP_MODE === 'dev_mock') {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(localDocKey(collectionName, id), JSON.stringify(data));
+    return;
+  }
+  const db = await getFirestore();
+  const { doc, setDoc } = await import('firebase/firestore');
+  await setDoc(doc(db, collectionName, id), toFirestoreData(data));
+}
+
+export async function deleteCollectionDoc(collectionName, id) {
+  if (APP_MODE === 'dev_mock') {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(localDocKey(collectionName, id));
+    return;
+  }
+  const db = await getFirestore();
+  const { deleteDoc, doc } = await import('firebase/firestore');
+  await deleteDoc(doc(db, collectionName, id));
+}
+
+/**
+ * Reads legacy Drive library array from `theolab:library-drive` (dev_mock)
+ * or Firestore `settings/library_drive` (firebase_auth) for one-time migration.
+ */
+export async function readLegacyDriveLibraryItems() {
+  if (APP_MODE === 'dev_mock') {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem('theolab:library-drive');
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  try {
+    const db = await getFirestore();
+    const { doc, getDoc } = await import('firebase/firestore');
+    const snap = await getDoc(doc(db, 'settings', 'library_drive'));
+    const data = snap.exists() ? snap.data() : null;
+    return Array.isArray(data?.items) ? data.items : [];
+  } catch {
+    return [];
+  }
+}

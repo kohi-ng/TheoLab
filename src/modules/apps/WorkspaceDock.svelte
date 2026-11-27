@@ -47,10 +47,23 @@
     }
   }
 
+  function isGoogleLibraryItem(item: LibraryDockInput): boolean {
+    if (item.mimeType === 'application/vnd.google-apps.folder') return false;
+    return (
+      Boolean(item.url) &&
+      !item.url!.includes('REPLACE_') &&
+      (item.type === 'google' ||
+        item.kind === 'google-doc' ||
+        item.kind === 'google-sheet' ||
+        item.kind === 'google-slide' ||
+        item.kind === 'drive-file')
+    );
+  }
+
   function matchingLibraryDocs(kind: 'google-doc' | 'google-sheet'): LibraryDockInput[] {
     const wantedService = kind === 'google-sheet' ? 'spreadsheets' : 'document';
     return dockStore.libraryItems.filter((item) => {
-      if (item.type !== 'google' || !item.url || item.url.includes('REPLACE_')) return false;
+      if (!isGoogleLibraryItem(item) || !item.url) return false;
       const service = detectGoogleService(item.url);
       if (service === wantedService) return true;
       return service === 'drive';
@@ -59,9 +72,11 @@
 
   function dockableLibraryItems(): LibraryDockInput[] {
     return dockStore.libraryItems.filter(
-      (item) => (item.type === 'google' && Boolean(item.url) && !item.url!.includes('REPLACE_'))
-        || item.type === 'pdf'
-        || item.type === 'widget',
+      (item) =>
+        isGoogleLibraryItem(item)
+        || (item.type === 'pdf' && Boolean(item.file))
+        || item.type === 'widget'
+        || item.kind === 'widget',
     );
   }
 

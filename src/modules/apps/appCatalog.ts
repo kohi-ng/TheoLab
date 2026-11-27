@@ -63,6 +63,8 @@ export interface LibraryDockInput {
   id: string;
   title: string;
   type: string;
+  kind?: string;
+  mimeType?: string;
   url?: string;
   file?: string;
   sourceLabel?: string;
@@ -380,7 +382,18 @@ export function buildLibraryDockSpec(
   sandbox: string;
   allow?: string;
 } | null {
-  if (item.type === 'google' && item.url) {
+  const effectiveKind = item.kind ?? item.type;
+  const isGoogle =
+    item.type === 'google' ||
+    effectiveKind === 'google-doc' ||
+    effectiveKind === 'google-sheet' ||
+    effectiveKind === 'google-slide' ||
+    effectiveKind === 'drive-file';
+
+  if (isGoogle && item.url) {
+    if (item.mimeType === 'application/vnd.google-apps.folder' || item.url.includes('/folders/')) {
+      return null;
+    }
     const service = detectGoogleService(item.url);
     const mode: GoogleEmbedMode = service === 'document' || service === 'spreadsheets' ? 'edit' : 'preview';
     const embedUrl = normalizeGoogleEmbedUrl(item.url, mode);
@@ -399,7 +412,7 @@ export function buildLibraryDockSpec(
     };
   }
 
-  if (item.type === 'pdf' && item.file) {
+  if (effectiveKind === 'pdf' && item.file) {
     const segments = String(item.file).split('/');
     if (!segments.length || segments.some((s) => !/^[\w.-]+$/.test(s) || s === '.' || s === '..')) {
       return null;
@@ -415,7 +428,7 @@ export function buildLibraryDockSpec(
     };
   }
 
-  if (item.type === 'widget' && item.widget?.file) {
+  if (effectiveKind === 'widget' && item.widget?.file) {
     const filename = String(item.widget.file);
     if (!/^[\w.-]+\.html$/i.test(filename)) return null;
     const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;

@@ -20,7 +20,6 @@ import {
   registerModule,
   registerNavigationTabs,
 } from './core/moduleRegistry.js';
-import { LIBRARY_CATEGORIES, LIBRARY_DOCUMENTS } from './modules/library/libraryCatalog.js';
 import { runAgent } from './modules/agents/agentLoop.js';
 import { clearMessages, mountChatComposer, renderMessage } from './modules/agents/chatUI.js';
 import {
@@ -39,10 +38,11 @@ import {
   saveOwnerVault,
 } from './core/secretsVault.ts';
 import {
-  addDriveLibraryItem,
-  listDriveLibraryItems,
-  removeDriveLibraryItem,
-} from './core/driveLibrary.ts';
+  ensureLibraryLoaded,
+  libraryStore,
+  mountLibraryDrawer,
+  mountLibraryMain,
+} from './modules/library/mountLibrary.ts';
 import {
   canOpenLibraryItemInDock,
   dockStore,
@@ -50,7 +50,6 @@ import {
   mountWorkspaceDock,
   onDockLayoutChange,
   openLibraryItemInDock,
-  syncDockLibraryBridge,
 } from './modules/apps/mountApps.ts';
 import { extractCalendarEmbedUrl, isAllowedAppUrl } from './modules/apps/appCatalog.ts';
 import { mountTheonSettings } from './modules/theon/mountTheon.ts';
@@ -64,14 +63,13 @@ let sessions = [];
 let currentSession = null;
 let selectedTab = 'Bài học';
 let overflowExpanded = false;
-let currentLibraryItemId = null;
 let drawerOpen = false;
 let workspace = 'lesson';
 let workspaceComposerCleanup;
-let driveLibraryItems = [];
 let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
+let unmountLibraryMain = null;
 let unmountTheonSettings = null;
 let unmountAiSettings = null;
 let unmountDock = null;
@@ -93,6 +91,8 @@ function setTitle(title) {
 function clearAcademyMain() {
   unmountAcademyMain?.();
   unmountAcademyMain = null;
+  unmountLibraryMain?.();
+  unmountLibraryMain = null;
   unmountTheonSettings?.();
   unmountTheonSettings = null;
   unmountAiSettings?.();
@@ -627,166 +627,31 @@ function renderSessionList() {
   });
 }
 
-function syncLibraryToDock() {
-  syncDockLibraryBridge([...driveLibraryItems, ...LIBRARY_DOCUMENTS], async ({ title, url }) => {
-    const created = await addDriveLibraryItem({ title, url });
-    driveLibraryItems = [created, ...driveLibraryItems];
-    syncDockLibraryBridge([...driveLibraryItems, ...LIBRARY_DOCUMENTS]);
-    if (selectedTab === 'Thư viện') renderDrawerView();
-    return created;
-  });
-}
-
-function makeLibraryEntry(item, onChanged) {
-  const row = document.createElement('div');
-  row.style.display = 'flex';
-  row.style.alignItems = 'center';
-  row.style.gap = '4px';
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `library-entry${currentLibraryItemId === item.id ? ' selected' : ''}`;
-  button.style.flex = '1';
-  const title = document.createElement('strong');
-  title.textContent = item.title;
-  const source = document.createElement('small');
-  source.textContent = item.sourceLabel ?? item.type;
-  button.append(title, source);
-  button.addEventListener('click', () => {
-    showLibraryDocument(item).catch((error) => toast(`Không thể mở tài liệu: ${error.message}`));
-  });
-  row.append(button);
-
-  if (canOpenLibraryItemInDock(item)) {
-    const dockBtn = document.createElement('button');
-    dockBtn.type = 'button';
-    dockBtn.className = 'icon-button library-dock-btn';
-    dockBtn.title = 'Mở sang khung phải (chia tab)';
-    dockBtn.setAttribute('aria-label', `Mở ${item.title} sang khung phải`);
-    dockBtn.textContent = '◫';
-    dockBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
+function makeLibraryCallbacks() {
+  return {
+    onOpenItem: (item) => {
+      showLibraryDocument(item).catch((error) => toast(`Không thể mở tài liệu: ${error.message}`));
+    },
+    onOpenInDock: (item) => {
       openLibraryItemInDock(item);
       if (mobileLayout.matches) setDrawer(false);
-    });
-    row.append(dockBtn);
-  }
-
-  if (item.userAdded) {
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'icon-button';
-    del.title = 'Xóa khỏi thư viện';
-    del.setAttribute('aria-label', `Xóa ${item.title}`);
-    del.textContent = '×';
-    del.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      await removeDriveLibraryItem(item.id);
-      driveLibraryItems = await listDriveLibraryItems();
-      syncLibraryToDock();
-      toast(`Đã xóa "${item.title}" khỏi thư viện.`);
-      onChanged?.();
-    });
-    row.append(del);
-  }
-  return row;
-}
-
-function renderLibraryDrawer() {
-  const search = document.createElement('input');
-  search.className = 'search-input';
-  search.placeholder = 'Tìm nhanh trong thư viện';
-  search.setAttribute('aria-label', 'Tìm tài liệu trong thư viện');
-
-  const driveControls = document.createElement('div');
-  driveControls.style.display = 'flex';
-  driveControls.style.flexDirection = 'column';
-  driveControls.style.gap = '6px';
-  driveControls.style.margin = '8px 0';
-
-  const folderUrl = getCachedVault().driveFolderUrl;
-  if (folderUrl) {
-    const folderLink = document.createElement('a');
-    folderLink.className = 'tree-item';
-    folderLink.href = folderUrl;
-    folderLink.target = '_blank';
-    folderLink.rel = 'noopener noreferrer';
-    folderLink.textContent = '↗ Mở thư mục Drive cá nhân';
-    driveControls.append(folderLink);
-  }
-
-  const addToggle = document.createElement('button');
-  addToggle.type = 'button';
-  addToggle.className = 'tree-item';
-  addToggle.textContent = '＋ Thêm tài liệu Google Drive';
-
-  const addForm = document.createElement('form');
-  addForm.hidden = true;
-  addForm.style.display = 'none';
-  addForm.style.flexDirection = 'column';
-  addForm.style.gap = '6px';
-  addForm.style.padding = '8px';
-  addForm.style.borderRadius = '12px';
-  addForm.style.background = 'var(--surface-elevated)';
-
-  const titleInput = document.createElement('input');
-  titleInput.className = 'search-input';
-  titleInput.placeholder = 'Tên tài liệu (VD: Đề thi Hóa phân tích)';
-  const urlInput = document.createElement('input');
-  urlInput.className = 'search-input';
-  urlInput.type = 'url';
-  urlInput.placeholder = 'https://drive.google.com/file/d/…';
-  const submitBtn = document.createElement('button');
-  submitBtn.type = 'submit';
-  submitBtn.className = 'button button-soft';
-  submitBtn.textContent = 'Lưu vào Thư viện';
-  addForm.append(titleInput, urlInput, submitBtn);
-
-  addToggle.addEventListener('click', () => {
-    const show = addForm.hidden;
-    addForm.hidden = !show;
-    addForm.style.display = show ? 'flex' : 'none';
-  });
-
-  driveControls.append(addToggle, addForm);
-
-  const categoriesRoot = document.createElement('div');
-  const renderCategories = () => {
-    const query = search.value.trim().toLocaleLowerCase('vi');
-    const allDocs = [...driveLibraryItems, ...LIBRARY_DOCUMENTS];
-    categoriesRoot.replaceChildren();
-    LIBRARY_CATEGORIES.forEach((category) => {
-      const entries = allDocs.filter((item) => item.category === category.id
-        && `${item.title} ${item.sourceLabel ?? ''}`.toLocaleLowerCase('vi').includes(query));
-      if (!entries.length) return;
-      const heading = document.createElement('h2');
-      heading.className = 'drawer-section-title library-category-title';
-      heading.textContent = category.label;
-      categoriesRoot.append(heading, ...entries.map((entry) => makeLibraryEntry(entry, renderCategories)));
-    });
+    },
+    onAttachToChat: (item) => {
+      attachLibraryContext({
+        id: item.id,
+        title: item.title,
+        type: item.kind ?? item.type ?? 'drive-file',
+        sourceLabel: item.sourceLabel ?? item.kind ?? 'Thư viện',
+        content: String(
+          item.contextText
+            ?? (item.url
+              ? `${item.title}: ${item.url}${item.description ? `\n${item.description}` : ''}`
+              : `${item.title}${item.description ? `\n${item.description}` : ''}`),
+        ).slice(0, 16000),
+      }).catch((error) => toast(error.message));
+    },
+    onToast: toast,
   };
-
-  addForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    try {
-      const created = await addDriveLibraryItem({ title: titleInput.value, url: urlInput.value });
-      driveLibraryItems = [created, ...driveLibraryItems];
-      syncLibraryToDock();
-      titleInput.value = '';
-      urlInput.value = '';
-      addForm.hidden = true;
-      addForm.style.display = 'none';
-      toast(`Đã thêm "${created.title}" vào thư viện Drive.`);
-      renderCategories();
-      await showLibraryDocument(created);
-    } catch (error) {
-      toast(error.message);
-    }
-  });
-
-  search.addEventListener('input', renderCategories);
-  renderCategories();
-  drawerView.append(search, driveControls, categoriesRoot);
 }
 
 function renderDrawerView() {
@@ -807,7 +672,7 @@ function renderDrawerView() {
       },
     });
   } else if (selectedTab === 'Thư viện') {
-    renderLibraryDrawer();
+    unmountDrawerTree = mountLibraryDrawer(drawerView, makeLibraryCallbacks());
   } else if (selectedTab === 'Ứng dụng') {
     unmountDrawerTree = mountAppsDrawer(drawerView, {
       onLaunched: () => {
@@ -900,7 +765,7 @@ async function attachLibraryContext(context) {
 async function showLibraryDocument(item) {
   clearAcademyMain();
   workspace = 'lesson';
-  currentLibraryItemId = item.id;
+  libraryStore.setActiveItemId(item.id);
   dockStore.setExpanded(false);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
@@ -923,7 +788,6 @@ async function showLibraryDocument(item) {
     selectedBlockId: null,
     widgetState: null,
   });
-  renderDrawerView();
   setDrawer(false);
   document.querySelector('#current-title').textContent = item.title;
 }
@@ -931,33 +795,14 @@ async function showLibraryDocument(item) {
 async function renderLibrary() {
   clearAcademyMain();
   workspace = 'lesson';
-  currentLibraryItemId = null;
+  libraryStore.setActiveItemId(null);
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
   syncWorkspaceLayout();
   const lessonModule = await loadModule('lessonViewer');
   await lessonModule.disposeLessonResources(page);
-  page.replaceChildren();
-  const heading = document.createElement('h1');
-  heading.className = 'page-title';
-  heading.textContent = 'Thư viện';
-  const description = document.createElement('p');
-  description.className = 'page-subtitle';
-  description.textContent = 'Chọn tài liệu, bộ công thức hoặc mô phỏng để mở trên canvas, hoặc bấm ◫ để mở sang khung phải.';
-  page.append(heading, description);
-  const allDocs = [...driveLibraryItems, ...LIBRARY_DOCUMENTS];
-  LIBRARY_CATEGORIES.forEach((category) => {
-    const entries = allDocs.filter((item) => item.category === category.id);
-    if (!entries.length) return;
-    const section = document.createElement('section');
-    section.className = 'library-section';
-    const categoryHeading = document.createElement('h2');
-    categoryHeading.className = 'library-section-title';
-    categoryHeading.textContent = category.label;
-    section.append(categoryHeading);
-    entries.forEach((item) => section.append(makeLibraryEntry(item, () => renderLibrary())));
-    page.append(section);
-  });
+  await ensureLibraryLoaded();
+  unmountLibraryMain = mountLibraryMain(page, makeLibraryCallbacks());
   document.querySelector('#current-title').textContent = 'Thư viện';
 }
 
@@ -1286,8 +1131,7 @@ async function loadData() {
   try {
     await loadOwnerVault().catch((error) => toast(`Không thể mở Vault: ${error.message}`));
     aiConfigStore.syncFromVault();
-    driveLibraryItems = await listDriveLibraryItems();
-    syncLibraryToDock();
+    await ensureLibraryLoaded();
     dockStore.refreshVaultUrls();
     lesson = await loadLesson();
     lessons = await listLessons();
