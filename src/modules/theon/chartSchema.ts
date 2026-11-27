@@ -9,6 +9,7 @@
  * - `dual_axis`: two Y-axes (`axis: 'left'` and `axis: 'right'`), mixing bar/line/area freely
  * - `pie` / `donut`: proportional circular charts (accepts `slices` OR `labels` + `series[0].values`)
  * - `scatter`: numeric (x, y) point plot with optional trend line
+ * - `number_line`: mathematical real number line with intervals, rays (-∞/+∞), points, brackets/circles, and excluded-region hatching
  */
 import { z } from 'zod';
 
@@ -20,6 +21,7 @@ export const CHART_TYPES = [
   'donut',
   'scatter',
   'area',
+  'number_line',
 ] as const;
 
 export type TheonChartType = (typeof CHART_TYPES)[number];
@@ -59,6 +61,39 @@ export const ChartSliceSchema = z.object({
   color: HexColorSchema,
 });
 
+export const NumberLineIntervalSchema = z.object({
+  /** `null` or omitted means -∞ (unbounded left ray). */
+  from: z.number().finite().nullable().optional(),
+  /** `null` or omitted means +∞ (unbounded right ray). */
+  to: z.number().finite().nullable().optional(),
+  include_from: z.boolean().optional(),
+  include_to: z.boolean().optional(),
+  from_inclusive: z.boolean().optional(),
+  to_inclusive: z.boolean().optional(),
+  label: z.string().max(48).optional(),
+  color: HexColorSchema,
+  style: z.enum(['solution', 'excluded']).default('solution'),
+});
+
+export const NumberLinePointSchema = z.object({
+  value: z.number().finite(),
+  label: z.string().max(32).optional(),
+  filled: z.boolean().default(true),
+  color: HexColorSchema,
+});
+
+export const NumberLineConfigSchema = z.object({
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
+  axis_label: z.string().max(24).optional(),
+  expression: z.string().max(120).optional(),
+  intervals: z.array(NumberLineIntervalSchema).max(12).default([]),
+  points: z.array(NumberLinePointSchema).max(24).default([]),
+  hatch_excluded: z.boolean().default(true),
+  notation: z.enum(['bracket', 'circle', 'both']).default('both'),
+});
+
 export const DrawChartArgsSchema = z
   .object({
     visible: z.boolean().default(true),
@@ -71,6 +106,7 @@ export const DrawChartArgsSchema = z
     labels: z.array(z.string().max(40)).max(120).optional(),
     series: z.array(ChartSeriesSchema).max(6).optional(),
     slices: z.array(ChartSliceSchema).max(16).optional(),
+    number_line: NumberLineConfigSchema.optional(),
     show_grid: z.boolean().default(true),
     show_values: z.boolean().optional(),
   })
@@ -82,6 +118,23 @@ export const DrawChartArgsSchema = z
         path: ['chart_type'],
         message: 'Cần chỉ định chart_type khi visible = true.',
       });
+      return;
+    }
+
+    if (data.chart_type === 'number_line') {
+      const nl = data.number_line;
+      const hasContent =
+        Boolean(nl) &&
+        ((nl!.intervals?.length ?? 0) > 0 ||
+          (nl!.points?.length ?? 0) > 0 ||
+          (typeof nl!.min === 'number' && typeof nl!.max === 'number' && nl!.max > nl!.min));
+      if (!hasContent) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['number_line'],
+          message: 'Đồ thị trục số (`number_line`) cần ít nhất 1 khoảng (`intervals`), điểm (`points`), hoặc cặp `min`/`max`.',
+        });
+      }
       return;
     }
 
@@ -121,6 +174,8 @@ export const DrawChartArgsSchema = z
 export type DrawChartArgs = z.infer<typeof DrawChartArgsSchema>;
 export type ChartSeries = z.infer<typeof ChartSeriesSchema>;
 export type ChartSlice = z.infer<typeof ChartSliceSchema>;
+export type NumberLineIntervalInput = z.infer<typeof NumberLineIntervalSchema>;
+export type NumberLinePointInput = z.infer<typeof NumberLinePointSchema>;
 
 export interface NormalizedChartSlice {
   label: string;
@@ -138,6 +193,34 @@ export interface NormalizedChartSeries {
   points: Array<{ x: number; y: number; label?: string }>;
 }
 
+export interface NormalizedNumberLineInterval {
+  from: number | null;
+  to: number | null;
+  includeFrom: boolean;
+  includeTo: boolean;
+  label: string;
+  color: string;
+  style: 'solution' | 'excluded';
+}
+
+export interface NormalizedNumberLinePoint {
+  value: number;
+  label: string;
+  filled: boolean;
+  color: string;
+}
+
+export interface NormalizedNumberLine {
+  min: number;
+  max: number;
+  ticks: number[];
+  axisLabel: string;
+  intervals: NormalizedNumberLineInterval[];
+  points: NormalizedNumberLinePoint[];
+  hatchExcluded: boolean;
+  notation: 'bracket' | 'circle' | 'both';
+}
+
 export interface NormalizedChartSpec {
   chartType: TheonChartType;
   title: string;
@@ -148,6 +231,7 @@ export interface NormalizedChartSpec {
   labels: string[];
   series: NormalizedChartSeries[];
   slices: NormalizedChartSlice[];
+  numberLine?: NormalizedNumberLine;
   showGrid: boolean;
   showValues: boolean;
 }
@@ -191,10 +275,122 @@ export function computeNiceBounds(values: number[], includeZero = false): {
   return { min, max, ticks };
 }
 
+function normalizeNumberLine(
+  input: z.infer<typeof NumberLineConfigSchema>,
+  fallbackAxisLabel?: string,
+): NormalizedNumberLine {
+  const intervals: NormalizedNumberLineInterval[] = (input.intervals ?? []).map((iv, idx) => {
+    let from = iv.from ?? null;
+    let to = iv.to ?? null;
+    let includeFrom = Boolean(iv.include_from ?? iv.from_inclusive ?? false);
+    let includeTo = Boolean(iv.include_to ?? iv.to_inclusive ?? false);
+    if (from !== null && to !== null && from > to) {
+      [from, to] = [to, from];
+      [includeFrom, includeTo] = [includeTo, includeFrom];
+    }
+    return {
+      from,
+      to,
+      includeFrom,
+      includeTo,
+      label: iv.label?.trim() || '',
+      color:
+        iv.color ||
+        (iv.style === 'excluded'
+          ? '#f87171'
+          : DEFAULT_CHART_PALETTE[idx % DEFAULT_CHART_PALETTE.length]!),
+      style: iv.style ?? 'solution',
+    };
+  });
+
+  const points: NormalizedNumberLinePoint[] = (input.points ?? []).map((pt, idx) => ({
+    value: pt.value,
+    label: pt.label?.trim() || '',
+    filled: pt.filled ?? true,
+    color: pt.color || DEFAULT_CHART_PALETTE[(idx + 1) % DEFAULT_CHART_PALETTE.length]!,
+  }));
+
+  const anchors: number[] = [];
+  for (const iv of intervals) {
+    if (iv.from !== null) anchors.push(iv.from);
+    if (iv.to !== null) anchors.push(iv.to);
+  }
+  for (const pt of points) anchors.push(pt.value);
+  if (typeof input.min === 'number') anchors.push(input.min);
+  if (typeof input.max === 'number') anchors.push(input.max);
+
+  const finite = anchors.filter((v) => Number.isFinite(v));
+  let rawMin = finite.length ? Math.min(...finite) : -5;
+  let rawMax = finite.length ? Math.max(...finite) : 5;
+
+  if (Math.abs(rawMax - rawMin) < 1e-9) {
+    rawMin -= 3;
+    rawMax += 3;
+  } else {
+    const pad = Math.max(1, (rawMax - rawMin) * 0.24);
+    if (input.min === undefined) rawMin -= pad;
+    if (input.max === undefined) rawMax += pad;
+  }
+
+  let min = input.min ?? Math.floor(rawMin);
+  let max = input.max ?? Math.ceil(rawMax);
+  if (max <= min) {
+    min -= 2;
+    max += 2;
+  }
+
+  let ticks: number[] = [];
+  if (input.step && input.step > 0) {
+    const start = Math.ceil(min / input.step) * input.step;
+    for (let v = start; v <= max + input.step * 0.05 && ticks.length < 16; v += input.step) {
+      ticks.push(Number(v.toFixed(6)));
+    }
+  } else {
+    const range = max - min;
+    const rough = range / 8;
+    const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+    const norm = rough / mag;
+    const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+    const step = nice * mag;
+    const start = Math.ceil(min / step) * step;
+    for (let v = start; v <= max + step * 0.05 && ticks.length < 16; v += step) {
+      ticks.push(Number(v.toFixed(6)));
+    }
+  }
+
+  return {
+    min,
+    max,
+    ticks,
+    axisLabel: input.axis_label?.trim() || fallbackAxisLabel?.trim() || 'x',
+    intervals,
+    points,
+    hatchExcluded: input.hatch_excluded ?? true,
+    notation: input.notation ?? 'both',
+  };
+}
+
 export function normalizeChartSpec(args: DrawChartArgs): NormalizedChartSpec | null {
   if (!args.visible || !args.chart_type) return null;
 
   const chartType = args.chart_type;
+  if (chartType === 'number_line' && args.number_line) {
+    return {
+      chartType,
+      title: args.title?.trim() || 'TRỤC SỐ TOÁN HỌC',
+      subtitle: args.subtitle?.trim() || args.number_line.expression?.trim() || '',
+      xLabel: args.x_label?.trim() || args.number_line.axis_label?.trim() || 'x',
+      yLabel: '',
+      y2Label: '',
+      labels: [],
+      series: [],
+      slices: [],
+      numberLine: normalizeNumberLine(args.number_line, args.x_label),
+      showGrid: args.show_grid ?? true,
+      showValues: args.show_values ?? true,
+    };
+  }
+
   const rawSeries = args.series ?? [];
 
   // Normalize slices for pie / donut

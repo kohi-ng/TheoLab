@@ -128,6 +128,8 @@ export function createTheonEngine(container, initialOptions = {}) {
       eyeCamY: 0,
 
       exprCur: { ...EXPRESSION_PRESETS[initialExpr] },
+      speechTarget: 0,
+      speechLevel: 0,
 
       // Chuỗi tái tạo ma trận chữ dọc cho Theon
       matrixActive: true,
@@ -1294,10 +1296,11 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       applyMorph(morphTargets.browFurrow, e.browFurrow);
       applyMorph(morphTargets.cheekLift,  e.cheekLift);
       applyMorph(morphTargets.smile,      e.smile);
-      applyMorph(morphTargets.mouthOpen,  e.mouthOpen);
-      applyMorph(morphTargets.mouthPress, e.mouthPress);
+      const speechAmt = clamp(state.speechLevel, 0, 1);
+      applyMorph(morphTargets.mouthOpen,  clamp(e.mouthOpen + speechAmt * 0.68, 0, 1.05));
+      applyMorph(morphTargets.mouthPress, speechAmt > 0.04 ? e.mouthPress * (1 - speechAmt * 0.85) : e.mouthPress);
       applyMorph(morphTargets.mouthAsym,  e.mouthAsym);
-      applyMorph(morphTargets.jawDrop,    e.jawDrop);
+      applyMorph(morphTargets.jawDrop,    clamp(e.jawDrop + speechAmt * 0.44, 0, 0.92));
 
       if (state.matrixActive) {
         const revY = state.revealY;
@@ -2625,6 +2628,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
 
       const planeGeo = new THREE.PlaneGeometry(1, 1);
       const planeMat = applyVerticalMatrixReveal(
@@ -2655,6 +2659,8 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         panelMesh,
         canvas,
         texture,
+        canvasW: canvas.width,
+        canvasH: canvas.height,
         revealUniforms,
         visible: false,
         materializing: false,
@@ -2670,9 +2676,18 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
       if (!screenChartObj) return;
       const maxW = Math.max(2.4, state.screenW * 0.93);
       const maxH = Math.max(2.4, state.screenH * 0.84);
-      // Giữ tỉ lệ dễ đọc, không bị méo tròn/chữ khi kéo dock-splitter
-      const chartW = maxW;
-      const chartH = clamp(chartW * 0.62, Math.min(maxH, 4.4), maxH);
+      const isNumberLine = screenChartObj.currentSpec?.chartType === 'number_line';
+      const minAspect = isNumberLine ? 1.45 : 1.05;
+      const maxAspect = isNumberLine ? 2.35 : 1.95;
+      const aspect = clamp(maxW / maxH, minAspect, maxAspect);
+
+      // Fit 3D plane inside (maxW, maxH) with exact ratio `aspect` so circles & text never stretch.
+      let chartW = maxW;
+      let chartH = chartW / aspect;
+      if (chartH > maxH) {
+        chartH = maxH;
+        chartW = chartH * aspect;
+      }
 
       screenChartObj.chartW = chartW;
       screenChartObj.chartH = chartH;
@@ -2681,9 +2696,30 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
 
       if (screenChartObj.currentSpec) {
         const cw = 1280;
-        const ch = Math.max(600, Math.min(1100, Math.round(cw * (chartH / chartW))));
+        const ch = Math.max(512, Math.min(1280, Math.round((cw / aspect) / 8) * 8));
+        const sizeChanged = cw !== screenChartObj.canvasW || ch !== screenChartObj.canvasH;
         renderChartToCanvas(screenChartObj.canvas, screenChartObj.currentSpec, cw, ch);
-        screenChartObj.texture.needsUpdate = true;
+
+        if (sizeChanged) {
+          // WebGL2 throws/corrupts on texSubImage2D when a CanvasTexture's pixel dimensions change.
+          // Recreate the CanvasTexture cleanly whenever (cw, ch) changes.
+          const oldTex = screenChartObj.texture;
+          const nextTex = new THREE.CanvasTexture(screenChartObj.canvas);
+          nextTex.colorSpace = THREE.SRGBColorSpace;
+          nextTex.minFilter = THREE.LinearFilter;
+          nextTex.magFilter = THREE.LinearFilter;
+          nextTex.generateMipmaps = false;
+          nextTex.needsUpdate = true;
+
+          screenChartObj.texture = nextTex;
+          screenChartObj.canvasW = cw;
+          screenChartObj.canvasH = ch;
+          screenChartObj.panelMesh.material.map = nextTex;
+          screenChartObj.panelMesh.material.needsUpdate = true;
+          if (oldTex && oldTex !== nextTex) oldTex.dispose();
+        } else {
+          screenChartObj.texture.needsUpdate = true;
+        }
       }
     }
 
@@ -3415,6 +3451,10 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
         const k = EXPR_KEYS[i];
         state.exprCur[k] = lerp(state.exprCur[k], targetPreset[k], exprLerp);
       }
+      state.speechLevel = lerp(state.speechLevel, state.speechTarget, Math.min(1, dt * 18.0));
+      if (state.speechTarget === 0 && state.speechLevel < 0.002) {
+        state.speechLevel = 0;
+      }
       updateAsaroDeformation();
 
       const breathFreq = state.currentExpr === 'relaxed' ? 0.78 : (state.currentExpr === 'happy' ? 1.50 : 1.08);
@@ -3669,6 +3709,7 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
 
     function handleContainerResize() {
       if (!renderer || !running) return;
+      if (container.clientWidth < 16 || container.clientHeight < 16) return;
       const { w, h } = getContainerSize();
       renderer.setSize(w, h);
       rebuildBoxDimensions();
@@ -3937,10 +3978,16 @@ Mọi thông số đều đã sẵn sàng và ổn định... Mình luôn ở ng
     };
     activeStop = stop;
 
+    function setSpeechAmplitude(level) {
+      const next = typeof level === 'number' && Number.isFinite(level) ? clamp(level, 0, 1) : 0;
+      state.speechTarget = next;
+    }
+
     return {
       setMode,
       setExpression: (expr) => setExpression(expr, false),
       setReadingDocument,
+      setSpeechAmplitude,
       triggerNod,
       triggerBlink,
       updateSettings,

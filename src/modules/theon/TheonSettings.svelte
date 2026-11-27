@@ -1,24 +1,81 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { APP_MODE } from '../../config/runtimeConfig.js';
   import { aiConfigStore } from '../../core/aiConfigStore.svelte';
   import {
     THEON_EXPRESSION_LABELS,
     THEON_EXPRESSIONS,
+    THEON_GEMINI_VOICES,
     THEON_HEAD_STYLE_LABELS,
     THEON_HEAD_STYLES,
+    THEON_OPENAI_VOICES,
+    THEON_STT_PROVIDER_LABELS,
+    THEON_STT_PROVIDERS,
+    THEON_TTS_PROVIDER_LABELS,
+    THEON_TTS_PROVIDERS,
     type TheonExpression,
     type TheonHeadStyle,
     type TheonMatrixSpeed,
+    type TheonSttProvider,
+    type TheonTtsProvider,
   } from './theonConfig';
   import { THEON_SKILLS, type TheonSkillId } from './theonSkills';
   import { theonStore } from './theonStore.svelte';
+  import {
+    createTheonVoicePlayer,
+    DEFAULT_GOOGLE_TTS_MODEL,
+    DEFAULT_OPENAI_TTS_MODEL,
+    resolveEffectiveTtsProvider,
+  } from './theonVoice';
 
   let { onToast }: { onToast?: (message: string) => void } = $props();
 
   let modelSearch = $state('');
+  let testingVoice = $state(false);
+  let voiceTestNote = $state('');
+  const voicePreviewPlayer = createTheonVoicePlayer();
+
+  onDestroy(() => {
+    voicePreviewPlayer.stop();
+  });
 
   const settings = $derived(theonStore.settings);
   const enabledProviders = $derived(aiConfigStore.enabledProviders);
+  const customTtsProviders = $derived(
+    aiConfigStore.providers.filter((p) => p.kind === 'openai-compatible'),
+  );
+  const effectiveTtsProvider = $derived.by(() => {
+    void aiConfigStore.keyRevision;
+    return resolveEffectiveTtsProvider(settings);
+  });
+  const activeVoicePresets = $derived(
+    effectiveTtsProvider === 'google' ? THEON_GEMINI_VOICES : THEON_OPENAI_VOICES,
+  );
+  const ttsModelPlaceholder = $derived(
+    effectiveTtsProvider === 'google'
+      ? `Mặc định: ${DEFAULT_GOOGLE_TTS_MODEL}`
+      : `Mặc định: ${DEFAULT_OPENAI_TTS_MODEL}`,
+  );
+  const ttsStatusNote = $derived.by(() => {
+    void aiConfigStore.keyRevision;
+    if (effectiveTtsProvider === 'google') {
+      return aiConfigStore.isProviderConfigured('google')
+        ? 'Sẽ dùng Google Gemini Native TTS (khóa Google AI Studio).'
+        : 'Chưa có Google AI Studio API Key — sẽ tự dự phòng sang giọng trình duyệt.';
+    }
+    if (effectiveTtsProvider === 'openai') {
+      return aiConfigStore.isProviderConfigured('openai')
+        ? 'Sẽ dùng OpenAI TTS API (/v1/audio/speech).'
+        : 'Chưa có OpenAI API Key — sẽ tự dự phòng sang giọng trình duyệt.';
+    }
+    if (effectiveTtsProvider === 'custom') {
+      const cfg = aiConfigStore.getProvider(settings.ttsCustomProviderId || 'custom');
+      return cfg?.baseUrl
+        ? `Sẽ gọi ${cfg.baseUrl.replace(/\/+$/, '')}/audio/speech.`
+        : 'Chưa có Base URL cho endpoint Custom TTS.';
+    }
+    return 'Dùng Web Speech API tích hợp sẵn của trình duyệt (miễn phí, độ trễ thấp).';
+  });
   const groupedModels = $derived.by(() => {
     const visible = aiConfigStore.listModels({
       includeHidden: false,
@@ -80,7 +137,41 @@
 
   function handleClearHistory() {
     theonStore.clearHistory();
-    onToast?.('Đã xóa lịch sử hội thoại của Theon.');
+    onToast?.('Đã xóa lịch sử nhắn tin của Theon.');
+  }
+
+  function handleClearVoiceHistory() {
+    theonStore.clearVoiceHistory();
+    onToast?.('Đã xóa lịch sử luồng thoại của Theon.');
+  }
+
+  async function handleTestVoice() {
+    if (testingVoice) {
+      voicePreviewPlayer.stop();
+      testingVoice = false;
+      voiceTestNote = '';
+      return;
+    }
+    testingVoice = true;
+    voiceTestNote = 'Đang tổng hợp giọng nói…';
+    await voicePreviewPlayer.speak(
+      'Xin chào! Tôi là Theon. Hệ thống đàm thoại giọng nói và vẽ đồ thị trục số đã sẵn sàng.',
+      settings,
+      {
+        onAmplitude: () => {},
+        onStart: (note) => {
+          voiceTestNote = note ? `Đang phát: ${note}` : 'Đang phát…';
+        },
+        onEnd: () => {
+          testingVoice = false;
+          voiceTestNote = '';
+        },
+        onError: (msg) => {
+          testingVoice = false;
+          voiceTestNote = msg;
+        },
+      },
+    );
   }
 
   function handleReset() {
@@ -339,6 +430,190 @@
   </div>
 
   <div class="theon-subsection">
+    <strong>Giọng nói &amp; AI TTS (Luồng thoại)</strong>
+    <p class="status-line">
+      Luồng thoại tách biệt với luồng gõ chữ — nhấn nút sóng âm bên trái ô nhập của Theon để nói chuyện trực tiếp và ra lệnh gọi hàm.
+    </p>
+
+    <label for="theon-tts-provider">Động cơ giọng nói (AI TTS)</label>
+    <select
+      id="theon-tts-provider"
+      class="select-input"
+      value={settings.ttsProvider}
+      onchange={(e) => {
+        const nextProvider = (e.currentTarget as HTMLSelectElement).value as TheonTtsProvider;
+        const patch: Partial<typeof settings> = { ttsProvider: nextProvider };
+        if (nextProvider === 'google' && !(THEON_GEMINI_VOICES as readonly string[]).includes(settings.ttsVoice)) {
+          patch.ttsVoice = 'Kore';
+        } else if (
+          (nextProvider === 'openai' || nextProvider === 'custom') &&
+          !(THEON_OPENAI_VOICES as readonly string[]).includes(settings.ttsVoice)
+        ) {
+          patch.ttsVoice = 'alloy';
+        }
+        theonStore.updateSettings(patch);
+      }}
+    >
+      {#each THEON_TTS_PROVIDERS as pid (pid)}
+        <option value={pid}>{THEON_TTS_PROVIDER_LABELS[pid]}</option>
+      {/each}
+    </select>
+    <p class="status-line">{ttsStatusNote}</p>
+
+    {#if settings.ttsProvider === 'custom'}
+      <label for="theon-tts-custom-provider">Endpoint Custom TTS (OpenAI-compatible)</label>
+      <select
+        id="theon-tts-custom-provider"
+        class="select-input"
+        value={settings.ttsCustomProviderId}
+        onchange={(e) => {
+          theonStore.updateSettings({
+            ttsCustomProviderId: (e.currentTarget as HTMLSelectElement).value,
+          });
+        }}
+      >
+        {#each customTtsProviders as p (p.id)}
+          <option value={p.id}>{p.label} ({p.baseUrl || 'chưa có URL'})</option>
+        {/each}
+      </select>
+    {/if}
+
+    {#if effectiveTtsProvider !== 'browser'}
+      <label for="theon-tts-model">Model TTS (để trống để dùng mặc định)</label>
+      <input
+        id="theon-tts-model"
+        class="text-input"
+        type="text"
+        value={settings.ttsModel}
+        placeholder={ttsModelPlaceholder}
+        onchange={(e) => {
+          theonStore.updateSettings({
+            ttsModel: (e.currentTarget as HTMLInputElement).value.trim(),
+          });
+        }}
+      />
+
+      <label for="theon-tts-voice">Giọng đọc (Voice)</label>
+      <div class="theon-voice-row">
+        <select
+          id="theon-tts-voice"
+          class="select-input"
+          value={(activeVoicePresets as readonly string[]).includes(settings.ttsVoice) ? settings.ttsVoice : ''}
+          onchange={(e) => {
+            const val = (e.currentTarget as HTMLSelectElement).value;
+            if (val) theonStore.updateSettings({ ttsVoice: val });
+          }}
+        >
+          {#each activeVoicePresets as v (v)}
+            <option value={v}>{v}</option>
+          {/each}
+          {#if !(activeVoicePresets as readonly string[]).includes(settings.ttsVoice)}
+            <option value="">Tùy chỉnh ({settings.ttsVoice})</option>
+          {/if}
+        </select>
+        <input
+          class="text-input"
+          type="text"
+          aria-label="Tên giọng đọc tùy chỉnh"
+          value={settings.ttsVoice}
+          placeholder="Nhập tên voice..."
+          onchange={(e) => {
+            const val = (e.currentTarget as HTMLInputElement).value.trim();
+            if (val) theonStore.updateSettings({ ttsVoice: val });
+          }}
+        />
+      </div>
+    {/if}
+
+    <div class="setting-row">
+      <label for="theon-tts-speed">Tốc độ đọc</label>
+      <strong>{settings.ttsSpeed.toFixed(2)}x</strong>
+    </div>
+    <input
+      id="theon-tts-speed"
+      class="theon-range"
+      type="range"
+      min="0.6"
+      max="1.8"
+      step="0.05"
+      value={settings.ttsSpeed}
+      oninput={(e) => {
+        theonStore.updateSettings({
+          ttsSpeed: Number((e.currentTarget as HTMLInputElement).value),
+        });
+      }}
+    />
+
+    <label for="theon-stt-provider">Nhận dạng giọng nói (Ra lệnh bằng giọng nói)</label>
+    <select
+      id="theon-stt-provider"
+      class="select-input"
+      value={settings.sttProvider}
+      onchange={(e) => {
+        theonStore.updateSettings({
+          sttProvider: (e.currentTarget as HTMLSelectElement).value as TheonSttProvider,
+        });
+      }}
+    >
+      {#each THEON_STT_PROVIDERS as sid (sid)}
+        <option value={sid}>{THEON_STT_PROVIDER_LABELS[sid]}</option>
+      {/each}
+    </select>
+
+    <label for="theon-voice-lang">Ngôn ngữ thoại</label>
+    <select
+      id="theon-voice-lang"
+      class="select-input"
+      value={settings.voiceLang}
+      onchange={(e) => {
+        theonStore.updateSettings({
+          voiceLang: (e.currentTarget as HTMLSelectElement).value,
+        });
+      }}
+    >
+      <option value="vi-VN">Tiếng Việt (vi-VN)</option>
+      <option value="en-US">English (en-US)</option>
+    </select>
+
+    <div class="setting-row">
+      <label for="theon-voice-continuous">Thoại liên tục (tự lắng nghe tiếp sau khi Theon nói xong)</label>
+      <input
+        id="theon-voice-continuous"
+        type="checkbox"
+        checked={settings.voiceContinuous}
+        onchange={(e) => {
+          theonStore.updateSettings({
+            voiceContinuous: (e.currentTarget as HTMLInputElement).checked,
+          });
+        }}
+      />
+    </div>
+
+    <div class="setting-row">
+      <label for="theon-tts-autospeak-text">Tự đọc thành tiếng cả câu trả lời ở luồng gõ chữ</label>
+      <input
+        id="theon-tts-autospeak-text"
+        type="checkbox"
+        checked={settings.ttsAutoSpeakText}
+        onchange={(e) => {
+          theonStore.updateSettings({
+            ttsAutoSpeakText: (e.currentTarget as HTMLInputElement).checked,
+          });
+        }}
+      />
+    </div>
+
+    <div class="theon-settings-actions">
+      <button type="button" class="button button-soft" onclick={handleTestVoice}>
+        {testingVoice ? '⏹ Dừng nghe thử' : '🔊 Nghe thử giọng Theon'}
+      </button>
+      {#if voiceTestNote}
+        <span class="status-line">{voiceTestNote}</span>
+      {/if}
+    </div>
+  </div>
+
+  <div class="theon-subsection">
     <div class="setting-row">
       <label for="theon-mcp-enabled">Bật cầu nối MCP cho Theon (chỉ gọi tool trong allowlist)</label>
       <input
@@ -365,7 +640,10 @@
 
   <div class="theon-settings-actions">
     <button type="button" class="button button-soft" onclick={handleClearHistory}>
-      Xóa lịch sử Theon ({Math.floor(theonStore.history.length / 2)} lượt)
+      Xóa lịch sử nhắn tin ({Math.floor(theonStore.history.length / 2)} lượt)
+    </button>
+    <button type="button" class="button button-soft" onclick={handleClearVoiceHistory}>
+      Xóa lịch sử thoại ({Math.floor(theonStore.voiceHistory.length / 2)} lượt)
     </button>
     <button type="button" class="button button-soft" onclick={handleReset}>
       Khôi phục mặc định
@@ -464,5 +742,11 @@
     font-weight: 600;
     color: var(--success);
     white-space: nowrap;
+  }
+
+  .theon-voice-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
 </style>

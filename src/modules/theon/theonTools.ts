@@ -257,7 +257,7 @@ const CORE_TOOL_SPECS: readonly TheonToolSpec[] = Object.freeze([
   {
     name: 'draw_chart',
     description:
-      'Vẽ biểu đồ dữ liệu trực tiếp lên màn hình kính khung hộp Theon với hiệu ứng kết tinh ma trận (hỗ trợ: line, bar, dual_axis, pie, donut, scatter, area). Truyền visible=false để ẩn biểu đồ.',
+      'Vẽ biểu đồ dữ liệu trực tiếp lên màn hình kính khung hộp Theon với hiệu ứng kết tinh ma trận (hỗ trợ: line, bar, dual_axis, pie, donut, scatter, area, number_line — trục số toán học biểu diễn khoảng/đoạn/nửa khoảng/tia tập nghiệm). Truyền visible=false để ẩn biểu đồ.',
     parameters: {
       type: 'object',
       properties: {
@@ -265,7 +265,7 @@ const CORE_TOOL_SPECS: readonly TheonToolSpec[] = Object.freeze([
         chart_type: {
           type: 'string',
           enum: [...CHART_TYPES],
-          description: 'Loại biểu đồ: line (đường), bar (cột), dual_axis (hai trục Y trái/phải), pie (tròn), donut (vành khuyên), scatter (phân tán x-y), area (miền).',
+          description: 'Loại biểu đồ: line (đường), bar (cột), dual_axis (hai trục Y trái/phải), pie (tròn), donut (vành khuyên), scatter (phân tán x-y), area (miền), number_line (trục số toán học biểu diễn tập nghiệm/khoảng/đoạn/điểm).',
         },
         title: { type: 'string', description: 'Tiêu đề biểu đồ.' },
         subtitle: { type: 'string', description: 'Phụ đề hoặc nguồn dữ liệu (tùy chọn).' },
@@ -317,6 +317,50 @@ const CORE_TOOL_SPECS: readonly TheonToolSpec[] = Object.freeze([
             },
             required: ['label', 'value'],
           },
+        },
+        number_line: {
+          type: 'object',
+          description: 'Cấu hình đồ thị trục số toán học (dùng khi chart_type="number_line").',
+          properties: {
+            min: { type: 'number', description: 'Cận trái hiển thị trên trục số (tùy chọn, tự tính nếu bỏ trống).' },
+            max: { type: 'number', description: 'Cận phải hiển thị trên trục số (tùy chọn, tự tính nếu bỏ trống).' },
+            step: { type: 'number', description: 'Bước chia vạch trục số (tùy chọn).' },
+            axis_label: { type: 'string', description: 'Ký hiệu trục (mặc định x).' },
+            expression: { type: 'string', description: 'Biểu thức tập nghiệm hiển thị phụ đề (VD: S = (-∞; -2) ∪ [3; +∞)).' },
+            notation: { type: 'string', enum: ['bracket', 'circle', 'both'], description: 'Kiểu ký hiệu đầu mút: bracket ([ ]), circle (● ○), hoặc both (mặc định).' },
+            hatch_excluded: { type: 'boolean', description: 'Gạch chéo phần bị loại khỏi tập nghiệm (mặc định true).' },
+            intervals: {
+              type: 'array',
+              description: 'Danh sách khoảng/đoạn/nửa khoảng/tia. Đặt from=null cho -∞ và to=null cho +∞.',
+              items: {
+                type: 'object',
+                properties: {
+                  from: { type: 'number', description: 'Đầu mút trái (bỏ trống hoặc null nếu là -∞).' },
+                  to: { type: 'number', description: 'Đầu mút phải (bỏ trống hoặc null nếu là +∞).' },
+                  include_from: { type: 'boolean', description: 'true = ngoặc vuông [ / chấm đặc ●; false = ngoặc tròn ( / chấm rỗng ○.' },
+                  include_to: { type: 'boolean', description: 'true = ngoặc vuông ] / chấm đặc ●; false = ngoặc tròn ) / chấm rỗng ○.' },
+                  label: { type: 'string', description: 'Nhãn chú giải khoảng (tùy chọn).' },
+                  color: { type: 'string', description: 'Mã màu hex (tùy chọn).' },
+                },
+                required: [],
+              },
+            },
+            points: {
+              type: 'array',
+              description: 'Các điểm rời rạc trên trục số (VD nghiệm đơn x = 1 hoặc điểm loại trừ).',
+              items: {
+                type: 'object',
+                properties: {
+                  value: { type: 'number', description: 'Tọa độ điểm trên trục số.' },
+                  filled: { type: 'boolean', description: 'true = chấm đặc ● (thuộc tập), false = chấm rỗng ○ (loại trừ).' },
+                  label: { type: 'string', description: 'Nhãn hiển thị phía trên điểm (VD: x = 2).' },
+                  color: { type: 'string', description: 'Mã màu hex (tùy chọn).' },
+                },
+                required: ['value'],
+              },
+            },
+          },
+          required: [],
         },
         show_grid: { type: 'boolean', description: 'Hiện lưới tọa độ (mặc định true).' },
         show_values: { type: 'boolean', description: 'Hiện nhãn số liệu trực tiếp trên cột/lát.' },

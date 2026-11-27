@@ -8,6 +8,8 @@ import { detectExpressionFromText, renderMatrixFrame } from './matrixText';
 import { executeTheonTool, getActiveTheonToolSpecs } from './theonTools';
 import { ExerciseTabPayloadSchema, parseExerciseTabPayload } from './exerciseSchema';
 import { findAppDefinition, parsePersistedDockState } from '../apps/appCatalog';
+import { normalizeAiMarkdown, stripFormattingForSpeech } from './theonReplyFormatter';
+import { pcm16ToWavBytes, resolveOpenAiTtsEndpoint } from './theonVoice';
 
 describe('Theon config & settings', () => {
   it('defaults to a fixed box (parallax disabled), enabled multiagent skills, and valid model preset', () => {
@@ -341,4 +343,118 @@ describe('Theon draw_chart tool & schema conventions', () => {
     );
     expect(badRes.ok).toBe(false);
   });
+
+  it('validates and normalizes mathematical number_line charts (intervals, rays, points)', async () => {
+    const onDrawChart = vi.fn();
+
+    const nlRes = await executeTheonTool(
+      'draw_chart',
+      {
+        visible: true,
+        chart_type: 'number_line',
+        title: 'Tập nghiệm bất phương trình',
+        number_line: {
+          axis_label: 'x',
+          expression: 'S = (-∞; -2) ∪ [3; +∞)',
+          notation: 'both',
+          hatch_excluded: true,
+          intervals: [
+            { from: null, to: -2, include_to: false, label: 'x < -2' },
+            { from: 5, to: 3, include_from: true, include_to: false }, // reversed bounds -> auto-swapped
+          ],
+          points: [{ value: 1, filled: false, label: 'x ≠ 1' }],
+        },
+      },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+
+    expect(nlRes.ok).toBe(true);
+    const spec = onDrawChart.mock.calls.at(-1)?.[0];
+    expect(spec?.chartType).toBe('number_line');
+    expect(spec?.subtitle).toBe('S = (-∞; -2) ∪ [3; +∞)');
+    expect(spec?.numberLine?.intervals).toHaveLength(2);
+    expect(spec?.numberLine?.intervals[0]?.from).toBeNull();
+    expect(spec?.numberLine?.intervals[0]?.to).toBe(-2);
+    expect(spec?.numberLine?.intervals[0]?.includeTo).toBe(false);
+    // Reversed [5, 3) -> normalized to (3, 5]
+    expect(spec?.numberLine?.intervals[1]?.from).toBe(3);
+    expect(spec?.numberLine?.intervals[1]?.to).toBe(5);
+    expect(spec?.numberLine?.intervals[1]?.includeFrom).toBe(false);
+    expect(spec?.numberLine?.intervals[1]?.includeTo).toBe(true);
+    expect(spec?.numberLine?.points[0]?.value).toBe(1);
+    expect(spec?.numberLine?.points[0]?.filled).toBe(false);
+    expect(spec?.numberLine?.min).toBeLessThan(-2);
+    expect(spec?.numberLine?.max).toBeGreaterThan(5);
+
+    // Reject empty number_line (no intervals and no points)
+    const emptyNl = await executeTheonTool(
+      'draw_chart',
+      { visible: true, chart_type: 'number_line', number_line: { intervals: [], points: [] } },
+      { onSetExpression: vi.fn(), onDrawChart },
+    );
+    expect(emptyNl.ok).toBe(false);
+  });
 });
+
+describe('Theon reply formatter & speech cleaner', () => {
+  it('normalizes \\[...\\] and \\(...\\) LaTeX delimiters while leaving code blocks untouched', () => {
+    const raw = [
+      'Nghiệm phương trình là \\(x = \\frac{-b \\pm \\sqrt{\\Delta}}{2a}\\).',
+      '\\[S = (-\\infty; -2) \\cup [3; +\\infty)\\]',
+      '```tex',
+      '\\(keep_inside_code\\)',
+      '```',
+    ].join('\n');
+
+    const normalized = normalizeAiMarkdown(raw);
+    expect(normalized).toContain('$x = \\frac{-b \\pm \\sqrt{\\Delta}}{2a}$');
+    expect(normalized).toContain('$$\nS = (-\\infty; -2) \\cup [3; +\\infty)\n$$');
+    expect(normalized).toContain('\\(keep_inside_code\\)');
+  });
+
+  it('cleans Markdown and LaTeX into natural spoken Vietnamese for TTS', () => {
+    const spoken = stripFormattingForSpeech(
+      '**Kết quả:** $x \\ge \\frac{1}{2}$ và $x^2 \\ne 4$ xem [Bài 1](#/toan/ch1/u1).',
+    );
+    expect(spoken).not.toContain('$');
+    expect(spoken).not.toContain('**');
+    expect(spoken).not.toContain('#/toan');
+    expect(spoken).toContain('lớn hơn hoặc bằng');
+    expect(spoken).toContain('1 phần 2');
+    expect(spoken).toContain('bình phương');
+    expect(spoken).toContain('khác');
+  });
+});
+
+describe('Theon Voice & AI TTS utilities', () => {
+  it('migrates legacy settings seamlessly with voice & TTS defaults', () => {
+    const parsed = parseTheonSettings(JSON.stringify({ provider: 'google', model: 'gemini-2.5-flash' }));
+    expect(parsed.ttsProvider).toBe('auto');
+    expect(parsed.ttsAutoSpeakText).toBe(false);
+    expect(parsed.sttProvider).toBe('browser');
+    expect(parsed.voiceLang).toBe('vi-VN');
+    expect(parsed.voiceContinuous).toBe(true);
+  });
+
+  it('encodes raw PCM16 samples with a valid 44-byte RIFF/WAVE header', () => {
+    const pcm = new Uint8Array([0, 0, 127, 0, 128, 255, 0, 0]);
+    const wav = pcm16ToWavBytes(pcm, 24000, 1);
+    expect(wav.byteLength).toBe(44 + pcm.byteLength);
+    expect(String.fromCharCode(wav[0] ?? 0, wav[1] ?? 0, wav[2] ?? 0, wav[3] ?? 0)).toBe('RIFF');
+    expect(String.fromCharCode(wav[8] ?? 0, wav[9] ?? 0, wav[10] ?? 0, wav[11] ?? 0)).toBe('WAVE');
+    const view = new DataView(wav.buffer);
+    expect(view.getUint32(24, true)).toBe(24000);
+    expect(view.getUint32(40, true)).toBe(pcm.byteLength);
+  });
+
+  it('resolves OpenAI-compatible TTS endpoint from base or chat completion URLs', () => {
+    expect(resolveOpenAiTtsEndpoint('https://api.example.com/v1')).toBe('https://api.example.com/v1/audio/speech');
+    expect(resolveOpenAiTtsEndpoint('https://api.example.com/v1/chat/completions')).toBe(
+      'https://api.example.com/v1/audio/speech',
+    );
+    expect(resolveOpenAiTtsEndpoint('https://api.example.com/v1/audio/speech')).toBe(
+      'https://api.example.com/v1/audio/speech',
+    );
+  });
+});
+

@@ -58,6 +58,7 @@ export interface TheonEngineController {
   spawnNoteCard(options?: SpawnNoteCardOptions): unknown;
   setScreenChart(spec: NormalizedChartSpec | null): void;
   setPinnedGraph(visible: boolean, mode?: TheonGraphMode): void;
+  setSpeechAmplitude(level: number): void;
   clearObjects(): void;
   destroy(): void;
 }

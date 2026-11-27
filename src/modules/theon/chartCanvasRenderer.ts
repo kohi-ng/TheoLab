@@ -12,13 +12,23 @@ const TYPE_BADGES: Record<NormalizedChartSpec['chartType'], string> = {
   donut: 'DONUT',
   scatter: 'SCATTER',
   area: 'AREA',
+  number_line: 'TRỤC SỐ',
 };
 
 function formatTick(val: number): string {
   if (Math.abs(val) >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
   if (Math.abs(val) >= 10_000) return `${(val / 1_000).toFixed(1)}k`;
   if (Number.isInteger(val)) return String(val);
-  return Math.abs(val) < 1 ? val.toFixed(2) : val.toFixed(1);
+  return Math.abs(val) < 1 ? Number(val.toFixed(2)).toString() : Number(val.toFixed(2)).toString();
+}
+
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let out = text;
+  while (out.length > 3 && ctx.measureText(`${out}…`).width > maxWidth) {
+    out = out.slice(0, -1);
+  }
+  return `${out}…`;
 }
 
 function withAlpha(hex: string, alpha: number): string {
@@ -42,20 +52,17 @@ function drawFrameAndHeader(
   H: number,
   spec: NormalizedChartSpec,
 ): number {
-  // Translucent dark-glass hologram surface so Theon remains subtly visible behind
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, 'rgba(3, 11, 26, 0.90)');
-  bg.addColorStop(1, 'rgba(2, 7, 18, 0.94)');
+  bg.addColorStop(0, 'rgba(3, 11, 26, 0.92)');
+  bg.addColorStop(1, 'rgba(2, 7, 18, 0.96)');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle scanline texture
   ctx.fillStyle = 'rgba(59, 130, 246, 0.035)';
   for (let y = 0; y < H; y += 6) {
     ctx.fillRect(0, y, W, 1);
   }
 
-  // Glowing outer frame + precision corner brackets
   ctx.strokeStyle = 'rgba(59, 130, 246, 0.55)';
   ctx.lineWidth = 2;
   ctx.strokeRect(4, 4, W - 8, H - 8);
@@ -64,32 +71,26 @@ function drawFrameAndHeader(
   ctx.strokeStyle = '#93c5fd';
   ctx.lineWidth = 4;
   ctx.beginPath();
-  // Top-left
   ctx.moveTo(4, corner);
   ctx.lineTo(4, 4);
   ctx.lineTo(corner, 4);
-  // Top-right
   ctx.moveTo(W - corner, 4);
   ctx.lineTo(W - 4, 4);
   ctx.lineTo(W - 4, corner);
-  // Bottom-left
   ctx.moveTo(4, H - corner);
   ctx.lineTo(4, H - 4);
   ctx.lineTo(corner, H - 4);
-  // Bottom-right
   ctx.moveTo(W - corner, H - 4);
   ctx.lineTo(W - 4, H - 4);
   ctx.lineTo(W - 4, H - corner);
   ctx.stroke();
 
-  // Header band
   const headerH = spec.subtitle ? 84 : 66;
   ctx.fillStyle = 'rgba(15, 38, 82, 0.55)';
   ctx.fillRect(6, 6, W - 12, headerH);
   ctx.fillStyle = 'rgba(96, 165, 250, 0.55)';
   ctx.fillRect(6, 6 + headerH, W - 12, 2);
 
-  // Chart type pill
   const badgeText = TYPE_BADGES[spec.chartType] ?? 'CHART';
   ctx.font = '700 15px "JetBrains Mono", ui-monospace, monospace';
   const badgeW = ctx.measureText(badgeText).width + 24;
@@ -103,17 +104,17 @@ function drawFrameAndHeader(
   ctx.textBaseline = 'middle';
   ctx.fillText(badgeText, W - badgeW / 2 - 24, 37);
 
-  // Title & subtitle
+  const maxTitleW = Math.max(160, W - badgeW - 72);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#f1f5f9';
-  ctx.font = '700 26px "Inter", system-ui, sans-serif';
-  ctx.fillText(spec.title.slice(0, 56), 28, 44);
+  ctx.font = '700 25px "Inter", system-ui, sans-serif';
+  ctx.fillText(fitText(ctx, spec.title, maxTitleW), 28, 44);
 
   if (spec.subtitle) {
     ctx.fillStyle = '#93c5fd';
     ctx.font = '500 16px "Inter", system-ui, sans-serif';
-    ctx.fillText(spec.subtitle.slice(0, 86), 28, 72);
+    ctx.fillText(fitText(ctx, spec.subtitle, W - 56), 28, 72);
   }
 
   return 6 + headerH + 12;
@@ -163,9 +164,13 @@ function renderPieOrDonut(
 
   const isDonut = spec.chartType === 'donut';
   const availH = H - contentTop - 28;
-  const radius = Math.max(70, Math.min(availH * 0.43, W * 0.23));
-  const cx = W * 0.34;
-  const cy = contentTop + availH * 0.50;
+  const stacked = W / H < 1.25;
+
+  const radius = stacked
+    ? Math.max(64, Math.min(availH * 0.27, W * 0.30))
+    : Math.max(70, Math.min(availH * 0.43, W * 0.23));
+  const cx = stacked ? W * 0.5 : W * 0.34;
+  const cy = stacked ? contentTop + radius + 24 : contentTop + availH * 0.5;
 
   let startAngle = -Math.PI / 2;
   for (const slice of slices) {
@@ -182,14 +187,13 @@ function renderPieOrDonut(
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Percentage label on large enough slices
     if (spec.showValues && slice.percent >= 7) {
       const mid = startAngle + sweep / 2;
       const lr = isDonut ? radius * 0.76 : radius * 0.64;
       const lx = cx + Math.cos(mid) * lr;
       const ly = cy + Math.sin(mid) * lr;
       ctx.fillStyle = '#020617';
-      ctx.font = '700 16px "JetBrains Mono", ui-monospace, monospace';
+      ctx.font = '700 15px "JetBrains Mono", ui-monospace, monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(`${slice.percent.toFixed(1)}%`, lx, ly);
@@ -198,7 +202,6 @@ function renderPieOrDonut(
     startAngle = endAngle;
   }
 
-  // Outer glowing hologram ring
   ctx.beginPath();
   ctx.arc(cx, cy, radius + 6, 0, Math.PI * 2);
   ctx.strokeStyle = 'rgba(96, 165, 250, 0.35)';
@@ -222,32 +225,351 @@ function renderPieOrDonut(
     ctx.textBaseline = 'middle';
     ctx.fillText('TỔNG', cx, cy - 14);
     ctx.fillStyle = '#f8fafc';
-    ctx.font = '700 24px "JetBrains Mono", ui-monospace, monospace';
+    ctx.font = '700 22px "JetBrains Mono", ui-monospace, monospace';
     ctx.fillText(formatTick(total), cx, cy + 14);
   }
 
-  // Right-side breakdown legend
-  const listX = W * 0.62;
-  const maxListW = W - listX - 28;
-  const rowH = Math.min(44, Math.max(28, (availH - 16) / Math.max(slices.length, 1)));
-  let ly = contentTop + Math.max(16, (availH - slices.length * rowH) * 0.5);
+  const listX = stacked ? 36 : W * 0.62;
+  const maxListW = stacked ? W - 72 : W - listX - 28;
+  const listAvailH = stacked ? H - (cy + radius + 36) - 18 : availH - 16;
+  const rowH = Math.min(40, Math.max(24, listAvailH / Math.max(slices.length, 1)));
+  let ly = stacked
+    ? cy + radius + 36
+    : contentTop + Math.max(16, (availH - slices.length * rowH) * 0.5);
 
   ctx.textBaseline = 'middle';
   for (const slice of slices) {
+    if (ly > H - 16) break;
     ctx.fillStyle = slice.color;
     ctx.fillRect(listX, ly - 8, 14, 16);
 
     ctx.fillStyle = '#f1f5f9';
-    ctx.font = '600 18px "Inter", system-ui, sans-serif';
+    ctx.font = '600 17px "Inter", system-ui, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(slice.label.slice(0, 22), listX + 24, ly);
+    ctx.fillText(fitText(ctx, slice.label, maxListW * 0.54), listX + 24, ly);
 
     ctx.fillStyle = '#93c5fd';
-    ctx.font = '700 16px "JetBrains Mono", ui-monospace, monospace';
+    ctx.font = '700 15px "JetBrains Mono", ui-monospace, monospace';
     ctx.textAlign = 'right';
     ctx.fillText(`${formatTick(slice.value)} (${slice.percent.toFixed(1)}%)`, listX + maxListW, ly);
 
     ly += rowH;
+  }
+}
+
+function drawHatchBand(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  x2: number,
+  axisY: number,
+  halfH: number,
+  color = 'rgba(248, 113, 113, 0.42)',
+) {
+  const left = Math.min(x1, x2);
+  const right = Math.max(x1, x2);
+  if (right - left < 4) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, axisY - halfH, right - left, halfH * 2);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  const step = 14;
+  for (let x = left - halfH * 2; x <= right + halfH * 2; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, axisY + halfH);
+    ctx.lineTo(x + halfH * 2, axisY - halfH);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBracketGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  axisY: number,
+  side: 'left' | 'right',
+  inclusive: boolean,
+  color: string,
+) {
+  const h = 24;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
+  ctx.shadowColor = withAlpha(color, 0.7);
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  if (inclusive) {
+    const lip = side === 'left' ? 10 : -10;
+    ctx.moveTo(x + lip, axisY - h);
+    ctx.lineTo(x, axisY - h);
+    ctx.lineTo(x, axisY + h);
+    ctx.lineTo(x + lip, axisY + h);
+  } else {
+    const bulge = side === 'left' ? -10 : 10;
+    ctx.moveTo(x + (side === 'left' ? 5 : -5), axisY - h);
+    ctx.quadraticCurveTo(x + bulge, axisY, x + (side === 'left' ? 5 : -5), axisY + h);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderNumberLineChart(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  contentTop: number,
+  spec: NormalizedChartSpec,
+) {
+  const nl = spec.numberLine;
+  if (!nl) return;
+
+  const legendItems: Array<{ label: string; color: string }> = [];
+  nl.intervals.forEach((iv, idx) => {
+    const leftSym = iv.from === null ? '(−∞' : `${iv.includeFrom ? '[' : '('}${formatTick(iv.from)}`;
+    const rightSym = iv.to === null ? '+∞)' : `${formatTick(iv.to)}${iv.includeTo ? ']' : ')'}`;
+    legendItems.push({
+      label: iv.label || `${iv.style === 'excluded' ? 'Loại: ' : ''}${leftSym}; ${rightSym}`,
+      color: iv.color,
+    });
+    void idx;
+  });
+  if (nl.hatchExcluded && nl.intervals.some((i) => i.style === 'solution')) {
+    legendItems.push({ label: 'Phần bị loại (gạch chéo)', color: '#f87171' });
+  }
+
+  const afterLegendY = drawLegend(ctx, W, contentTop, legendItems);
+
+  const padL = 78;
+  const padR = 88;
+  const lineStart = padL;
+  const lineEnd = W - padR;
+  const lineW = Math.max(160, lineEnd - lineStart);
+  const availH = H - afterLegendY - 36;
+  const axisY = afterLegendY + availH * 0.54;
+
+  const span = Math.max(nl.max - nl.min, 1e-9);
+  const mapX = (v: number) => lineStart + ((v - nl.min) / span) * lineW;
+  const clampX = (px: number) => Math.max(lineStart, Math.min(lineEnd, px));
+
+  // Optional subtle vertical grid at regular ticks
+  if (spec.showGrid) {
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.16)';
+    ctx.lineWidth = 1;
+    for (const tick of nl.ticks) {
+      const px = mapX(tick);
+      if (px < lineStart + 6 || px > lineEnd - 6) continue;
+      ctx.beginPath();
+      ctx.moveTo(px, afterLegendY + 18);
+      ctx.lineTo(px, H - 46);
+      ctx.stroke();
+    }
+  }
+
+  // Compute complement excluded regions if hatchExcluded is true and solution intervals exist
+  const solutionIntervals = nl.intervals.filter((i) => i.style === 'solution');
+  const explicitExcluded = nl.intervals.filter((i) => i.style === 'excluded');
+
+  if (nl.hatchExcluded && solutionIntervals.length > 0) {
+    // Merge solution ranges in pixel space [lineStart, lineEnd]
+    const covered = solutionIntervals
+      .map((iv) => ({
+        a: iv.from === null ? lineStart : clampX(mapX(iv.from)),
+        b: iv.to === null ? lineEnd : clampX(mapX(iv.to)),
+      }))
+      .sort((u, v) => u.a - v.a);
+
+    const merged: Array<{ a: number; b: number }> = [];
+    for (const seg of covered) {
+      const prev = merged[merged.length - 1];
+      if (prev && seg.a <= prev.b + 1) {
+        prev.b = Math.max(prev.b, seg.b);
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+
+    let cursor = lineStart;
+    for (const seg of merged) {
+      if (seg.a > cursor + 2) drawHatchBand(ctx, cursor, seg.a, axisY, 20);
+      cursor = Math.max(cursor, seg.b);
+    }
+    if (cursor < lineEnd - 2) drawHatchBand(ctx, cursor, lineEnd, axisY, 20);
+  }
+
+  for (const ex of explicitExcluded) {
+    const x1 = ex.from === null ? lineStart : clampX(mapX(ex.from));
+    const x2 = ex.to === null ? lineEnd : clampX(mapX(ex.to));
+    drawHatchBand(ctx, x1, x2, axisY, 20, withAlpha(ex.color, 0.5));
+  }
+
+  // Main real number axis with arrowheads
+  ctx.save();
+  ctx.strokeStyle = '#93c5fd';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(lineStart - 16, axisY);
+  ctx.lineTo(lineEnd + 22, axisY);
+  ctx.stroke();
+
+  // Right arrowhead (+∞)
+  ctx.fillStyle = '#93c5fd';
+  ctx.beginPath();
+  ctx.moveTo(lineEnd + 28, axisY);
+  ctx.lineTo(lineEnd + 14, axisY - 8);
+  ctx.lineTo(lineEnd + 14, axisY + 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Infinity & axis labels
+  ctx.font = '700 18px "JetBrains Mono", ui-monospace, monospace';
+  ctx.fillStyle = '#93c5fd';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  ctx.fillText('−∞', lineStart - 24, axisY);
+  ctx.textAlign = 'left';
+  ctx.fillText('+∞', lineEnd + 34, axisY);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = 'italic 700 20px "Inter", Georgia, serif';
+  ctx.fillText(nl.axisLabel, lineEnd + 36, axisY - 26);
+
+  // Regular tick marks
+  ctx.font = '600 15px "JetBrains Mono", ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const criticalXs: number[] = [];
+  for (const iv of nl.intervals) {
+    if (iv.from !== null) criticalXs.push(clampX(mapX(iv.from)));
+    if (iv.to !== null) criticalXs.push(clampX(mapX(iv.to)));
+  }
+  for (const pt of nl.points) criticalXs.push(clampX(mapX(pt.value)));
+
+  for (const tick of nl.ticks) {
+    const px = mapX(tick);
+    if (px < lineStart + 6 || px > lineEnd - 6) continue;
+    const isZero = Math.abs(tick) < 1e-9;
+    ctx.strokeStyle = isZero ? '#e2e8f0' : 'rgba(147, 197, 253, 0.55)';
+    ctx.lineWidth = isZero ? 2.5 : 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, axisY - (isZero ? 11 : 7));
+    ctx.lineTo(px, axisY + (isZero ? 11 : 7));
+    ctx.stroke();
+
+    // Avoid colliding regular tick text with critical endpoint labels
+    const tooClose = criticalXs.some((cx) => Math.abs(cx - px) < 34);
+    if (!tooClose) {
+      ctx.fillStyle = isZero ? '#f8fafc' : '#94a3b8';
+      ctx.fillText(formatTick(tick), px, axisY + 34);
+    }
+  }
+
+  // Highlight solution intervals with glowing bands + endpoints
+  const showBrackets = nl.notation === 'bracket' || nl.notation === 'both';
+  const showCircles = nl.notation === 'circle' || nl.notation === 'both';
+
+  solutionIntervals.forEach((iv) => {
+    const x1 = iv.from === null ? lineStart - 10 : clampX(mapX(iv.from));
+    const x2 = iv.to === null ? lineEnd + 16 : clampX(mapX(iv.to));
+
+    // Glowing translucent band over interval
+    ctx.fillStyle = withAlpha(iv.color, 0.2);
+    ctx.fillRect(x1, axisY - 14, Math.max(4, x2 - x1), 28);
+
+    // Bright glowing solution segment on axis
+    ctx.save();
+    ctx.strokeStyle = iv.color;
+    ctx.lineWidth = 7;
+    ctx.shadowColor = withAlpha(iv.color, 0.85);
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(x1, axisY);
+    ctx.lineTo(x2, axisY);
+    ctx.stroke();
+    ctx.restore();
+
+    // Unbounded ray arrowheads
+    if (iv.from === null) {
+      ctx.fillStyle = iv.color;
+      ctx.beginPath();
+      ctx.moveTo(lineStart - 18, axisY);
+      ctx.lineTo(lineStart - 4, axisY - 8);
+      ctx.lineTo(lineStart - 4, axisY + 8);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (iv.to === null) {
+      ctx.fillStyle = iv.color;
+      ctx.beginPath();
+      ctx.moveTo(lineEnd + 24, axisY);
+      ctx.lineTo(lineEnd + 10, axisY - 8);
+      ctx.lineTo(lineEnd + 10, axisY + 8);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Endpoints (brackets + circles + crisp value labels)
+    const drawEnd = (val: number, side: 'left' | 'right', inc: boolean) => {
+      const px = clampX(mapX(val));
+      if (showBrackets) {
+        drawBracketGlyph(ctx, px, axisY, side, inc, iv.color);
+      }
+      if (showCircles) {
+        ctx.beginPath();
+        ctx.arc(px, axisY, 8.5, 0, Math.PI * 2);
+        ctx.fillStyle = inc ? iv.color : '#020817';
+        ctx.fill();
+        ctx.strokeStyle = iv.color;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '700 18px "JetBrains Mono", ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(formatTick(val), px, axisY + 34);
+    };
+
+    if (iv.from !== null) drawEnd(iv.from, 'left', iv.includeFrom);
+    if (iv.to !== null) drawEnd(iv.to, 'right', iv.includeTo);
+
+    if (iv.label) {
+      const midX = (x1 + x2) / 2;
+      ctx.fillStyle = iv.color;
+      ctx.font = '700 16px "Inter", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(iv.label, midX, axisY - 34);
+    }
+  });
+
+  // Discrete points on the number line
+  for (const pt of nl.points) {
+    const px = clampX(mapX(pt.value));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, axisY, 9, 0, Math.PI * 2);
+    ctx.fillStyle = pt.filled ? pt.color : '#020817';
+    ctx.shadowColor = withAlpha(pt.color, 0.8);
+    ctx.shadowBlur = 10;
+    ctx.fill();
+    ctx.strokeStyle = pt.color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 17px "JetBrains Mono", ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(formatTick(pt.value), px, axisY + 34);
+
+    if (pt.label) {
+      ctx.fillStyle = pt.color;
+      ctx.font = '700 15px "Inter", system-ui, sans-serif';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(pt.label, px, axisY - 22);
+    }
   }
 }
 
@@ -307,7 +629,6 @@ function renderCartesianChart(
     );
   };
 
-  // Grid & Left Y ticks
   ctx.font = '600 15px "JetBrains Mono", ui-monospace, monospace';
   ctx.textBaseline = 'middle';
   for (const tick of leftBounds.ticks) {
@@ -325,7 +646,6 @@ function renderCartesianChart(
     ctx.fillText(formatTick(tick), padL - 12, py);
   }
 
-  // Right Y ticks (for dual_axis)
   if (hasRightAxis && rightBounds) {
     for (const tick of rightBounds.ticks) {
       const py = mapYRight(tick);
@@ -335,7 +655,6 @@ function renderCartesianChart(
     }
   }
 
-  // Axes border lines
   ctx.strokeStyle = 'rgba(147, 197, 253, 0.65)';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -348,7 +667,6 @@ function renderCartesianChart(
   }
   ctx.stroke();
 
-  // X ticks & vertical grid
   if (isNumericX && xBounds) {
     for (const tick of xBounds.ticks) {
       const px =
@@ -381,7 +699,6 @@ function renderCartesianChart(
     }
   }
 
-  // Axis labels
   ctx.font = '600 16px "Inter", system-ui, sans-serif';
   if (spec.xLabel) {
     ctx.fillStyle = '#93c5fd';
@@ -410,7 +727,6 @@ function renderCartesianChart(
     ctx.restore();
   }
 
-  // Draw bar series first (so lines/scatter appear crisply on top!)
   const barSeries = spec.series.filter((s) => s.kind === 'bar');
   const count = Math.max(1, spec.labels.length);
   const slotW = plotW / count;
@@ -448,7 +764,6 @@ function renderCartesianChart(
     });
   }
 
-  // Draw area, line, and scatter series
   const hasBars = barSeries.length > 0;
   for (const s of spec.series) {
     if (s.kind === 'bar') continue;
@@ -502,7 +817,6 @@ function renderCartesianChart(
       ctx.restore();
     }
 
-    // Points / markers
     const showDots = s.kind === 'scatter' || coords.length <= 24;
     if (showDots) {
       const r = s.kind === 'scatter' ? 6 : 4.5;
@@ -537,7 +851,9 @@ export function renderChartToCanvas(
   ctx.clearRect(0, 0, width, height);
   const contentTop = drawFrameAndHeader(ctx, width, height, spec);
 
-  if (spec.chartType === 'pie' || spec.chartType === 'donut') {
+  if (spec.chartType === 'number_line') {
+    renderNumberLineChart(ctx, width, height, contentTop, spec);
+  } else if (spec.chartType === 'pie' || spec.chartType === 'donut') {
     renderPieOrDonut(ctx, width, height, contentTop, spec);
   } else {
     renderCartesianChart(ctx, width, height, contentTop, spec);

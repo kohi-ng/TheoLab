@@ -14,13 +14,25 @@ import {
 import type { TheonMessage } from './theonAgent';
 
 export type TheonStatus = 'idle' | 'processing' | 'speaking' | 'error';
+export type TheonVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
 class TheonStore {
   settings = $state<TheonSettings>(loadTheonSettings());
+
+  // ── Luồng gõ chữ (Text stream — giữ nguyên hành vi hiện có) ──
   status = $state<TheonStatus>('idle');
   expression = $state<TheonExpression>(this.settings.defaultExpression);
   outputText = $state<string>('');
   history = $state<TheonMessage[]>([]);
+
+  // ── Luồng thoại (Voice stream — độc lập với luồng gõ chữ) ──
+  voiceActive = $state<boolean>(false);
+  voicePhase = $state<TheonVoicePhase>('idle');
+  voiceTranscript = $state<string>('');
+  voiceReply = $state<string>('');
+  voiceAmplitude = $state<number>(0);
+  voiceStatusNote = $state<string>('');
+  voiceHistory = $state<TheonMessage[]>([]);
 
   private settingsListeners = new Set<(next: TheonSettings) => void>();
 
@@ -38,7 +50,7 @@ class TheonStore {
     };
     this.settings = next;
     saveTheonSettings(next);
-    if (patch.defaultExpression && this.status === 'idle') {
+    if (patch.defaultExpression && this.status === 'idle' && this.voicePhase === 'idle') {
       this.expression = patch.defaultExpression;
     }
     this.settingsListeners.forEach((cb) => cb(next));
@@ -67,11 +79,31 @@ class TheonStore {
     this.history = next.slice(-20);
   }
 
+  pushVoiceTurn(userText: string, assistantText: string) {
+    const next = [
+      ...this.voiceHistory,
+      { role: 'user' as const, content: userText },
+      { role: 'assistant' as const, content: assistantText },
+    ];
+    this.voiceHistory = next.slice(-20);
+  }
+
   clearHistory() {
     this.history = [];
     this.outputText = '';
     this.status = 'idle';
     this.expression = this.settings.defaultExpression;
+  }
+
+  clearVoiceHistory() {
+    this.voiceHistory = [];
+    this.voiceTranscript = '';
+    this.voiceReply = '';
+    this.voiceStatusNote = '';
+    this.voiceAmplitude = 0;
+    if (!this.voiceActive) {
+      this.voicePhase = 'idle';
+    }
   }
 }
 

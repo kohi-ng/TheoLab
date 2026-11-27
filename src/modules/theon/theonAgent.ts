@@ -41,14 +41,21 @@ export interface TheonTurnResult {
 
 const MAX_TOOL_STEPS = 6;
 
-function buildSystemInstruction(settings: TheonSettings): string {
+function buildSystemInstruction(settings: TheonSettings, mode: 'text' | 'voice' = 'text'): string {
   const parts: string[] = [
     settings.systemPrompt.trim() ||
       'Bạn là Theon — hệ thống đa tác nhân học tập trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng.',
+    'Quy tắc định dạng câu trả lời: dùng Markdown sạch, bọc công thức toán/hóa trong `$...$` hoặc `$$...$$` (chuẩn KaTeX/mhchem), không dùng ký hiệu thô khó đọc.',
     `Biểu cảm hợp lệ cho hàm set_expression: ${THEON_EXPRESSIONS.join(', ')}.`,
     'Danh mục Skill đang bật (gọi `read_skill` để xem hướng dẫn chi tiết & mẫu JSON khi cần):',
     formatEnabledSkillsCatalog(settings.enabledSkills),
   ];
+
+  if (mode === 'voice') {
+    parts.push(
+      'Chế độ LUỒNG THOẠI (giọng nói): người dùng đang nói chuyện trực tiếp và ra lệnh bằng giọng nói. Hãy thực thi đầy đủ các hàm/công cụ phù hợp (`draw_chart`, `spawn_book`, `spawn_tag`, `open_exercise_tab`, `open_app_tab`, `search_kb`, `set_expression`, `clear_objects`) khi được yêu cầu; đồng thời trả lời tự nhiên, súc tích như đang trò chuyện (khoảng 2-4 câu ngắn, rõ ý) để đọc thành tiếng mượt mà trong khi vẫn giữ công thức `$...$` chuẩn trên màn hình.',
+    );
+  }
 
   if (settings.mcpEnabled && settings.mcpAllowedTools.length > 0) {
     parts.push(`Các công cụ MCP được phép gọi qua call_mcp_tool: ${settings.mcpAllowedTools.join(', ')}.`);
@@ -455,11 +462,13 @@ export async function runTheonTurn({
   prompt,
   history = [],
   settings,
+  mode = 'text',
   handlers: extraHandlers,
 }: {
   prompt: string;
   history?: readonly TheonMessage[];
   settings: TheonSettings;
+  mode?: 'text' | 'voice';
   handlers: Omit<TheonToolHandlers, 'settings'>;
 }): Promise<TheonTurnResult> {
   const cleanPrompt = prompt.trim();
@@ -482,7 +491,7 @@ export async function runTheonTurn({
     throw new Error(`Chưa có API Key cho ${providerConfig?.label ?? provider}. Hãy cấu hình khóa ở tab Cấu hình.`);
   }
 
-  const system = buildSystemInstruction(settings);
+  const system = buildSystemInstruction(settings, mode);
   const toolSpecs = getActiveTheonToolSpecs(settings);
   const toolsCalled: string[] = [];
   let chosenExpression: TheonExpression | null = null;

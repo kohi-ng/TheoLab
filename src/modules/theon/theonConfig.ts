@@ -84,10 +84,32 @@ export const THEON_MODEL_PRESETS: Record<string, readonly ModelPreset[]> = Objec
 export const THEON_MATRIX_SPEEDS = ['fast', 'medium', 'slow'] as const;
 export type TheonMatrixSpeed = (typeof THEON_MATRIX_SPEEDS)[number];
 
+export const THEON_TTS_PROVIDERS = ['auto', 'google', 'openai', 'custom', 'browser'] as const;
+export type TheonTtsProvider = (typeof THEON_TTS_PROVIDERS)[number];
+
+export const THEON_TTS_PROVIDER_LABELS: Record<TheonTtsProvider, string> = Object.freeze({
+  auto: 'Tự động (AI TTS nếu có khóa → Trình duyệt)',
+  google: 'Google Gemini Native TTS',
+  openai: 'OpenAI TTS (/v1/audio/speech)',
+  custom: 'Custom OpenAI-compatible TTS',
+  browser: 'Giọng trình duyệt (Web Speech)',
+});
+
+export const THEON_STT_PROVIDERS = ['browser', 'openai'] as const;
+export type TheonSttProvider = (typeof THEON_STT_PROVIDERS)[number];
+
+export const THEON_STT_PROVIDER_LABELS: Record<TheonSttProvider, string> = Object.freeze({
+  browser: 'Nhận dạng giọng nói trình duyệt (Thời gian thực)',
+  openai: 'OpenAI Whisper / Transcribe API',
+});
+
+export const THEON_GEMINI_VOICES = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede', 'Zephyr'] as const;
+export const THEON_OPENAI_VOICES = ['alloy', 'ash', 'coral', 'echo', 'nova', 'onyx', 'sage', 'shimmer'] as const;
+
 import { THEON_SKILL_IDS, type TheonSkillId } from './theonSkills';
 
 export const DEFAULT_THEON_SYSTEM_PROMPT =
-  'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `draw_chart` để vẽ biểu đồ dữ liệu (cột, đường, hai trục, tròn, vành khuyên, scatter, miền) trực tiếp lên màn hình hộp, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
+  'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Mọi công thức toán/hóa/lý phải bọc chuẩn LaTeX bằng `$...$` (inline) hoặc `$$...$$` (block), trình bày Markdown gọn gàng. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `draw_chart` để vẽ biểu đồ dữ liệu và đồ thị trục số toán học (`number_line`) trực tiếp lên màn hình hộp, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
 
 const KnownOrCustomProviderSchema = ProviderIdSchema.refine(
   (id) => (BUILTIN_PROVIDER_IDS as readonly string[]).includes(id) || id.startsWith('custom-'),
@@ -111,6 +133,15 @@ export const TheonSettingsSchema = z.object({
   enabledSkills: z.array(z.enum(THEON_SKILL_IDS)).default([...THEON_SKILL_IDS]),
   mcpEnabled: z.boolean().default(false),
   mcpAllowedTools: z.array(z.string().min(1).max(80)).max(30).default([]),
+  ttsProvider: z.enum(THEON_TTS_PROVIDERS).default('auto'),
+  ttsModel: z.string().max(120).default(''),
+  ttsVoice: z.string().max(64).default('Kore'),
+  ttsSpeed: z.number().min(0.6).max(1.8).default(1.05),
+  ttsCustomProviderId: z.string().max(64).default('custom'),
+  ttsAutoSpeakText: z.boolean().default(false),
+  sttProvider: z.enum(THEON_STT_PROVIDERS).default('browser'),
+  voiceLang: z.string().min(2).max(16).default('vi-VN'),
+  voiceContinuous: z.boolean().default(true),
 });
 
 export type TheonSettings = z.infer<typeof TheonSettingsSchema>;
@@ -143,6 +174,15 @@ export function createDefaultTheonSettings(): TheonSettings {
     enabledSkills: [...THEON_SKILL_IDS] as TheonSkillId[],
     mcpEnabled: false,
     mcpAllowedTools: [],
+    ttsProvider: 'auto',
+    ttsModel: '',
+    ttsVoice: 'Kore',
+    ttsSpeed: 1.05,
+    ttsCustomProviderId: 'custom',
+    ttsAutoSpeakText: false,
+    sttProvider: 'browser',
+    voiceLang: 'vi-VN',
+    voiceContinuous: true,
   };
 }
 
