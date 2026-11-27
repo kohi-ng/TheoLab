@@ -137,8 +137,10 @@ details summary { cursor: pointer; color: var(--text-primary); font-weight: 600;
 .depth-pill.selected { background: #fff; }
 .session-instructions { width: 100%; min-height: 66px; margin-top: 10px; resize: vertical; font-size: 12px; }
 .tuning-note { margin: 10px 0 0; }
+.model-picker-search { margin-bottom: 10px; padding: 9px 13px; font-size: 12px; }
 .model-group { margin: 12px 0 5px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
 .model-option { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; text-align: left; border: 0; border-radius: 13px; padding: 10px 8px; background: transparent; }
+.model-option.selected { background: var(--surface-elevated); }
 .model-copy { display: grid; gap: 3px; }
 .model-copy strong { margin: 0; font-size: 12px; }
 .model-copy small { color: var(--text-muted); font-size: 10px; }

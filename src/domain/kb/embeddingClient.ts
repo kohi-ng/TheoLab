@@ -56,7 +56,7 @@ export class EmbeddingError extends Error {
 
 /** Embeds texts in batches of ≤100. Returns unit-length Float32Arrays in input order. */
 export async function embedTexts(inputs: EmbedInput[], role: EmbedRole, config: EmbeddingConfig): Promise<Float32Array[]> {
-  if (!config.apiKey) throw new EmbeddingError('Chưa có Gemini API key (Cấu hình → BYOK).');
+  if (!config.apiKey) throw new EmbeddingError('Chưa có Google AI Studio API key (Cấu hình → Cấu hình AI → Google AI Studio).');
   const model = config.model ?? DEFAULT_EMBEDDING_MODEL;
   const dimensions = config.dimensions ?? DEFAULT_DIMENSIONS;
   const doFetch = config.fetchImpl ?? fetch;

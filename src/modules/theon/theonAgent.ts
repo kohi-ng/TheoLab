@@ -5,8 +5,15 @@
  */
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../../config/runtimeConfig.js';
 import { getActiveContext } from '../../core/contextBus.js';
-import { getApiKey, getLocalSetting } from '../../core/dataGateway.js';
+import { getLocalSetting } from '../../core/dataGateway.js';
 import { getCachedVault } from '../../core/secretsVault';
+import { aiConfigStore, resolveProviderApiKey } from '../../core/aiConfigStore.svelte';
+import {
+  BUILTIN_PROVIDER_CATALOG,
+  isAllowedProviderBaseUrl,
+  resolveOpenAiChatEndpoint,
+} from '../../domain/ai/providerCatalog';
+import { DEFAULT_VERTEX_MODEL, resolveVertexModelId } from '../../domain/ai/modelRegistry';
 import { detectExpressionFromText } from './matrixText';
 import {
   THEON_EXPRESSIONS,
@@ -33,8 +40,6 @@ export interface TheonTurnResult {
 }
 
 const MAX_TOOL_STEPS = 6;
-const DEFAULT_VERTEX_MODEL = 'gemini-3.8-flash';
-const RETIRED_VERTEX_MODELS = /^gemini-(2\.|3\.6)/;
 
 function buildSystemInstruction(settings: TheonSettings): string {
   const parts: string[] = [
@@ -78,13 +83,6 @@ async function readJsonResponse(response: Response): Promise<Record<string, unkn
     throw new Error(message);
   }
   return body;
-}
-
-function resolveProviderKey(provider: TheonSettings['provider']): string {
-  const vault = getCachedVault();
-  if (provider === 'google') return vault.geminiApiKey || getApiKey('google') || '';
-  if (provider === 'vertex') return vault.vertexApiKey || getApiKey('vertex') || '';
-  return getApiKey(provider) || '';
 }
 
 function toVertexSchema(
@@ -153,7 +151,7 @@ async function callVertexWithTools(
   const vault = getCachedVault();
   const app = getApps()[0] ?? initializeApp(firebaseConfig);
   const ai = getAI(app, { backend: new VertexAIBackend(vault.vertexLocation || 'global') });
-  const modelName = RETIRED_VERTEX_MODELS.test(settings.model) ? DEFAULT_VERTEX_MODEL : settings.model;
+  const modelName = resolveVertexModelId(settings.model || DEFAULT_VERTEX_MODEL);
 
   const tools: import('firebase/ai').FunctionDeclarationsTool[] | undefined = toolSpecs.length
     ? [
@@ -327,12 +325,12 @@ async function callOpenAiCompatibleWithTools(
       requestBody.tools = toolsPayload;
     }
 
+    const openAiHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) openAiHeaders.Authorization = `Bearer ${apiKey}`;
+
     let response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: openAiHeaders,
       body: JSON.stringify(requestBody),
     });
 
@@ -341,10 +339,7 @@ async function callOpenAiCompatibleWithTools(
       delete requestBody.tools;
       response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: openAiHeaders,
         body: JSON.stringify(requestBody),
       });
     }
@@ -403,6 +398,8 @@ async function callAnthropicWithTools(
       }))
     : undefined;
 
+  const maxTokens = Math.max(64, Math.min(128_000, Math.round(aiConfigStore.defaults.maxTokens || 2048)));
+
   for (let step = 0; step < MAX_TOOL_STEPS; step++) {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -414,7 +411,7 @@ async function callAnthropicWithTools(
       },
       body: JSON.stringify({
         model: settings.model,
-        max_tokens: 1600,
+        max_tokens: maxTokens,
         temperature: Math.max(0, Math.min(1, settings.temperature)),
         system,
         ...(toolsPayload ? { tools: toolsPayload } : {}),
@@ -471,9 +468,18 @@ export async function runTheonTurn({
   }
 
   const provider = settings.provider;
-  const apiKey = resolveProviderKey(provider);
-  if (provider !== 'vertex' && !apiKey) {
-    throw new Error(`Chưa có API Key cho ${provider}. Hãy cấu hình khóa ở tab Cấu hình.`);
+  const providerConfig = aiConfigStore.getProvider(provider);
+  const builtinMeta = BUILTIN_PROVIDER_CATALOG[provider as keyof typeof BUILTIN_PROVIDER_CATALOG];
+  const kind = providerConfig?.kind ?? builtinMeta?.kind ?? (provider.startsWith('custom') ? 'openai-compatible' : null);
+
+  if (!kind) {
+    throw new Error(`Provider "${provider}" chưa được hỗ trợ.`);
+  }
+
+  const apiKey = resolveProviderApiKey(provider);
+  const keyOptional = Boolean(providerConfig?.isCustom || provider === 'custom' || provider.startsWith('custom-'));
+  if (kind !== 'vertex' && !keyOptional && !apiKey) {
+    throw new Error(`Chưa có API Key cho ${providerConfig?.label ?? provider}. Hãy cấu hình khóa ở tab Cấu hình.`);
   }
 
   const system = buildSystemInstruction(settings);
@@ -491,9 +497,9 @@ export async function runTheonTurn({
   };
 
   let reply = '';
-  if (provider === 'vertex') {
+  if (kind === 'vertex') {
     reply = await callVertexWithTools(cleanPrompt, history, settings, system, toolSpecs, handlers, toolsCalled);
-  } else if (provider === 'google') {
+  } else if (kind === 'google') {
     reply = await callGoogleStudioWithTools(
       cleanPrompt,
       history,
@@ -504,10 +510,8 @@ export async function runTheonTurn({
       handlers,
       toolsCalled,
     );
-  } else if (provider === 'openai') {
-    reply = await callOpenAiCompatibleWithTools(
-      'https://api.openai.com/v1/chat/completions',
-      settings.model,
+  } else if (kind === 'anthropic') {
+    reply = await callAnthropicWithTools(
       cleanPrompt,
       history,
       settings,
@@ -517,38 +521,17 @@ export async function runTheonTurn({
       handlers,
       toolsCalled,
     );
-  } else if (provider === 'openrouter') {
-    reply = await callOpenAiCompatibleWithTools(
-      'https://openrouter.ai/api/v1/chat/completions',
-      settings.model,
-      cleanPrompt,
-      history,
-      settings,
-      system,
-      apiKey,
-      toolSpecs,
-      handlers,
-      toolsCalled,
-    );
-  } else if (provider === 'custom') {
-    const endpoint = getLocalSetting('custom-endpoint', '');
-    if (!endpoint) {
-      throw new Error('Chưa nhập Custom endpoint trong tab Cấu hình.');
+  } else if (kind === 'openai-compatible') {
+    const baseUrl =
+      providerConfig?.baseUrl ||
+      builtinMeta?.defaultBaseUrl ||
+      (provider === 'custom' ? getLocalSetting('custom-endpoint', '') : '');
+    if (!baseUrl || !isAllowedProviderBaseUrl(baseUrl)) {
+      throw new Error(`Chưa nhập Base URL hợp lệ cho ${providerConfig?.label ?? provider} trong tab Cấu hình.`);
     }
     reply = await callOpenAiCompatibleWithTools(
-      endpoint,
+      resolveOpenAiChatEndpoint(baseUrl),
       settings.model,
-      cleanPrompt,
-      history,
-      settings,
-      system,
-      apiKey,
-      toolSpecs,
-      handlers,
-      toolsCalled,
-    );
-  } else if (provider === 'anthropic') {
-    reply = await callAnthropicWithTools(
       cleanPrompt,
       history,
       settings,

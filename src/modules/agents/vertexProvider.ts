@@ -4,24 +4,29 @@
  * requests are authorized through Firebase + owner Google Sign-In.
  */
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../../config/runtimeConfig.js';
+import {
+  DEFAULT_VERTEX_MODEL,
+  RETIRED_VERTEX_MODELS,
+  resolveVertexModelId,
+} from '../../domain/ai/modelRegistry';
+
+export { DEFAULT_VERTEX_MODEL, RETIRED_VERTEX_MODELS, resolveVertexModelId };
 
 export interface VertexCallParams {
   model: string;
   system: string;
   prompt: string;
   temperature?: number;
+  maxTokens?: number;
   location?: string;
 }
-
-const DEFAULT_VERTEX_MODEL = 'gemini-3.8-flash';
-// Shut down on the Agent Platform (Vertex) API; saved sessions may still name them.
-const RETIRED_MODELS = /^gemini-(2\.|3\.6)/;
 
 export async function runVertexAI({
   model = DEFAULT_VERTEX_MODEL,
   system,
   prompt,
   temperature = 0.3,
+  maxTokens,
   location = 'global',
 }: VertexCallParams): Promise<string> {
   if (APP_MODE !== 'firebase_auth' || !isFirebaseConfigured()) {
@@ -34,9 +39,12 @@ export async function runVertexAI({
   const app = getApps()[0] ?? initializeApp(firebaseConfig);
   const ai = getAI(app, { backend: new VertexAIBackend(location) });
   const generativeModel = getGenerativeModel(ai, {
-    model: RETIRED_MODELS.test(model) ? DEFAULT_VERTEX_MODEL : model,
+    model: resolveVertexModelId(model),
     systemInstruction: system,
-    generationConfig: { temperature },
+    generationConfig: {
+      temperature,
+      ...(typeof maxTokens === 'number' && maxTokens > 0 ? { maxOutputTokens: maxTokens } : {}),
+    },
   });
   const result = await generativeModel.generateContent(prompt);
   return result.response.text() || 'Vertex AI không trả về nội dung.';

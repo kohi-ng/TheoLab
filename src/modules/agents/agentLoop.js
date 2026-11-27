@@ -1,6 +1,13 @@
-import { getApiKey, getLocalSetting } from '../../core/dataGateway.js';
+import { getLocalSetting } from '../../core/dataGateway.js';
 import { getCachedVault } from '../../core/secretsVault.ts';
 import { getActiveContext } from '../../core/contextBus.js';
+import { aiConfigStore, resolveProviderApiKey } from '../../core/aiConfigStore.svelte.ts';
+import {
+  BUILTIN_PROVIDER_CATALOG,
+  isAllowedProviderBaseUrl,
+  resolveOpenAiChatEndpoint,
+} from '../../domain/ai/providerCatalog.ts';
+import { DEFAULT_VERTEX_MODEL, resolveVertexModelId } from '../../domain/ai/modelRegistry.ts';
 import { getActiveSkills } from './skills/registry.js';
 import { search_vector_kb } from './functions/localFunctions.js';
 import { runVertexAI } from './vertexProvider.ts';
@@ -33,16 +40,28 @@ function sanitizeLesson(lesson) {
 export async function runAgent({
   prompt,
   model,
-  provider = 'google',
+  provider = aiConfigStore.defaults.providerId,
   preferences = {},
   context = {},
 }) {
   const vault = getCachedVault();
-  const apiKey = (provider === 'google' ? vault.geminiApiKey : provider === 'vertex' ? vault.vertexApiKey : '')
-    || getApiKey(provider);
-  if (provider !== 'vertex' && !apiKey) {
-    throw new Error(`Thêm API Key ${provider} trong tab Cấu hình để gọi Agent.`);
+  const defaults = aiConfigStore.defaults;
+  const providerConfig = aiConfigStore.getProvider(provider);
+  const kind = providerConfig?.kind
+    ?? BUILTIN_PROVIDER_CATALOG[provider]?.kind
+    ?? (provider.startsWith('custom') ? 'openai-compatible' : null);
+
+  if (!kind) {
+    throw new Error(`Provider "${provider}" chưa được hỗ trợ.`);
   }
+
+  const apiKey = resolveProviderApiKey(provider);
+  const keyOptional = Boolean(providerConfig?.isCustom || provider === 'custom' || provider.startsWith('custom-'));
+  if (kind !== 'vertex' && !keyOptional && !apiKey) {
+    throw new Error(`Thêm API Key cho ${providerConfig?.label ?? provider} trong tab Cấu hình để gọi Agent.`);
+  }
+
+  const resolvedModel = model || aiConfigStore.getDefaultModelForProvider(provider)?.modelId || defaults.modelId;
   const currentContext = getActiveContext();
   const activeContext = {
     ...(preferences.autoContext ? currentContext : {
@@ -57,12 +76,15 @@ export async function runAgent({
   };
   const skills = getActiveSkills(activeContext.activeTab);
   const lessonContext = (context.lessons ?? []).map(sanitizeLesson);
-  const activeLesson = context.autoContext && context.activeLesson
+  const activeLesson = preferences.autoContext && context.activeLesson
     ? sanitizeLesson(context.activeLesson)
     : null;
   const vectorResults = preferences.useRag ? await search_vector_kb(prompt) : null;
+
+  const defaultSystemPrompt = (preferences.systemPrompt ?? defaults.systemPrompt ?? '').trim();
   const instructions = [
     'You are a concise learning assistant for TheoLab. Reply in Vietnamese.',
+    ...(defaultSystemPrompt ? [`Default system instructions: ${defaultSystemPrompt}`] : []),
     `Skill: ${
       {
         supporter: 'Agent Supporter: guide with hints and questions before revealing the answer.',
@@ -89,24 +111,11 @@ export async function runAgent({
       : 'MCP tools are disabled.',
   ];
   const system = instructions.join('\n');
-  const temperature = Math.max(0, Math.min(1.2, Number(preferences.temperature ?? 0.3)));
-  const providerTemperature = provider === 'anthropic' ? Math.min(1, temperature) : temperature;
+  const temperature = Math.max(0, Math.min(1.2, Number(preferences.temperature ?? defaults.temperature ?? 0.3)));
+  const providerTemperature = kind === 'anthropic' ? Math.min(1, temperature) : temperature;
+  const maxTokens = Math.max(64, Math.min(128000, Math.round(Number(preferences.maxTokens ?? defaults.maxTokens ?? 2048))));
 
-  if (provider === 'openai') {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        temperature: providerTemperature,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-      }),
-    });
-    const body = await readResponse(response);
-    return body.choices?.[0]?.message?.content ?? 'Mô hình không trả về nội dung.';
-  }
-
-  if (provider === 'anthropic') {
+  if (kind === 'anthropic') {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -116,8 +125,8 @@ export async function runAgent({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
-        max_tokens: 1200,
+        model: resolvedModel,
+        max_tokens: maxTokens,
         temperature: providerTemperature,
         system,
         messages: [{ role: 'user', content: prompt }],
@@ -128,26 +137,30 @@ export async function runAgent({
       ?? 'Mô hình không trả về nội dung.';
   }
 
-  if (provider === 'vertex') {
+  if (kind === 'vertex') {
     return runVertexAI({
-      model: model || 'gemini-3.8-flash',
+      model: resolveVertexModelId(resolvedModel || DEFAULT_VERTEX_MODEL),
       system,
       prompt,
       temperature: providerTemperature,
+      maxTokens,
       location: vault.vertexLocation || 'global',
     });
   }
 
-  if (provider === 'google') {
+  if (kind === 'google') {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(resolvedModel)}:generateContent`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { temperature: providerTemperature },
+          generationConfig: {
+            temperature: providerTemperature,
+            maxOutputTokens: maxTokens,
+          },
         }),
       },
     );
@@ -156,21 +169,24 @@ export async function runAgent({
       ?? 'Mô hình không trả về nội dung.';
   }
 
-  if (provider === 'openrouter' || provider === 'custom') {
-    const endpoint = provider === 'openrouter'
-      ? 'https://openrouter.ai/api/v1/chat/completions'
-      : getLocalSetting('custom-endpoint');
-    if (!endpoint) throw new Error('Nhập Custom endpoint trong tab Cấu hình trước khi gửi.');
-    const requestModel = provider === 'custom' ? getLocalSetting('model:custom', model) : model;
+  if (kind === 'openai-compatible') {
+    const baseUrl = providerConfig?.baseUrl
+      || BUILTIN_PROVIDER_CATALOG[provider]?.defaultBaseUrl
+      || (provider === 'custom' ? getLocalSetting('custom-endpoint', '') : '');
+    if (!baseUrl || !isAllowedProviderBaseUrl(baseUrl)) {
+      throw new Error(`Nhập Base URL hợp lệ cho ${providerConfig?.label ?? provider} trong tab Cấu hình trước khi gửi.`);
+    }
+    const endpoint = resolveOpenAiChatEndpoint(baseUrl);
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
-        model: requestModel,
+        model: resolvedModel,
         temperature: providerTemperature,
+        max_tokens: maxTokens,
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       }),
     });

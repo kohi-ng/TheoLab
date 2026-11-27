@@ -38,7 +38,7 @@
       stats = result.stats;
       summaryNote = result.stats.denseReady
         ? `Hoàn tất: tạo mới ${result.embeddedNow} vector, tái sử dụng ${result.reused}, dọn ${result.removed} đoạn cũ.`
-        : `Đã cập nhật ${result.stats.totalChunks} đoạn cho tìm kiếm từ khóa BM25. Thêm Gemini API Key trong Cấu hình → Firestore Vault để bật Vector Embedding.`;
+        : `Đã cập nhật ${result.stats.totalChunks} đoạn cho tìm kiếm từ khóa BM25. Thêm Google AI Studio API Key trong Cấu hình → Cấu hình AI để bật Vector Embedding.`;
     } catch (error) {
       errorNote = (error as Error).message;
     } finally {

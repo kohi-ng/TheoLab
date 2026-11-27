@@ -5,15 +5,11 @@ import { APP_MODE } from './config/runtimeConfig.js';
 import { NAV_TABS } from './config/navigationConfig.js';
 import {
   deleteChatSession,
-  getApiKey,
-  getLocalSetting,
   listChatSessions,
   listLessons,
   loadLesson,
-  saveApiKey,
   saveChatSession,
   saveLesson,
-  saveLocalSetting,
 } from './core/dataGateway.js';
 import { getAuthState, signInWithGoogle } from './core/authGate.js';
 import { getActiveContext, updateContext } from './core/contextBus.js';
@@ -27,7 +23,6 @@ import {
 import { LIBRARY_CATEGORIES, LIBRARY_DOCUMENTS } from './modules/library/libraryCatalog.js';
 import { runAgent } from './modules/agents/agentLoop.js';
 import { clearMessages, mountChatComposer, renderMessage } from './modules/agents/chatUI.js';
-import { listSkills, setSkillEnabled } from './modules/agents/skills/registry.js';
 import {
   ensureAcademyLoaded,
   mountCourseTree,
@@ -59,15 +54,9 @@ import {
 } from './modules/apps/mountApps.ts';
 import { extractCalendarEmbedUrl, isAllowedAppUrl } from './modules/apps/appCatalog.ts';
 import { mountTheonSettings } from './modules/theon/mountTheon.ts';
+import { aiConfigStore } from './core/aiConfigStore.svelte.ts';
+import { mountAiSettings } from './modules/settings/mountAiSettings.ts';
 
-const defaultModels = {
-  vertex: { model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash' },
-  openai: { model: 'gpt-4.1', label: 'GPT-4.1' },
-  anthropic: { model: 'claude-sonnet-4-20250514', label: 'Claude Sonnet' },
-  google: { model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  openrouter: { model: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3' },
-  custom: { model: 'custom', label: 'Custom model' },
-};
 const app = document.querySelector('#app');
 let lesson;
 let lessons = [];
@@ -84,6 +73,7 @@ let saveQueue = Promise.resolve();
 let unmountDrawerTree = null;
 let unmountAcademyMain = null;
 let unmountTheonSettings = null;
+let unmountAiSettings = null;
 let unmountDock = null;
 let dockLayout = dockStore.layoutSnapshot;
 let unitTitle = 'TheoLab';
@@ -105,17 +95,23 @@ function clearAcademyMain() {
   unmountAcademyMain = null;
   unmountTheonSettings?.();
   unmountTheonSettings = null;
+  unmountAiSettings?.();
+  unmountAiSettings = null;
 }
 
 function makeDefaultPreferences(withContext = false) {
-  const provider = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
-  const defaultModel = defaultModels[provider] ?? defaultModels.google;
+  const defaults = aiConfigStore.defaults;
+  const provider = defaults.providerId;
+  const model = defaults.modelId || aiConfigStore.getDefaultModelForProvider(provider)?.modelId || 'gemini-2.5-flash';
+  const entry = aiConfigStore.findModel(provider, model);
   return {
     provider,
-    model: getLocalSetting(`model:${provider}`, defaultModel.model),
-    modelLabel: defaultModel.label,
+    model,
+    modelLabel: entry?.label ?? model,
     skill: 'supporter',
-    temperature: 0.3,
+    temperature: defaults.temperature ?? 0.3,
+    maxTokens: defaults.maxTokens ?? 2048,
+    systemPrompt: defaults.systemPrompt ?? '',
     depth: 'balanced',
     useRag: true,
     useMcp: false,
@@ -537,8 +533,6 @@ async function openSession(session) {
 async function createSession() {
   if (!requireData()) return;
   const now = new Date().toISOString();
-  const provider = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
-  const defaultModel = defaultModels[provider] ?? defaultModels.google;
   const session = {
     id: crypto.randomUUID(),
     title: 'Phiên chat mới',
@@ -547,9 +541,6 @@ async function createSession() {
     messages: [],
     preferences: {
       ...makeDefaultPreferences(Boolean(getActiveContext().lessonId)),
-      provider,
-      model: getLocalSetting(`model:${provider}`, defaultModel.model),
-      modelLabel: defaultModel.label,
       libraryContext: null,
     },
   };
@@ -1030,19 +1021,20 @@ function renderSettings() {
   document.querySelector('.app-shell').classList.remove('ai-workspace-open');
   document.querySelector('.app-main').classList.remove('ai-mode');
   syncWorkspaceLayout();
-  const skills = listSkills();
   page.innerHTML = `
     <h1 class="page-title">Cấu hình</h1>
-    <p class="page-subtitle">Thiết lập chế độ chạy và tích hợp cá nhân.</p>
+    <p class="page-subtitle">Thiết lập chế độ chạy, nhà cung cấp AI và tích hợp cá nhân.</p>
     <section class="settings-section">
       <h3>Chế độ & xác thực</h3>
       <div class="setting-row"><span>Chế độ hiện tại</span><strong>${APP_MODE}</strong></div>
       <p class="status-line" id="auth-status">Đang kiểm tra trạng thái xác thực…</p>
       <button class="button button-soft" data-action="sign-in">Đăng nhập Google</button>
     </section>
+    <div id="ai-settings-host"></div>
+    <div id="theon-settings-host"></div>
     <section class="settings-section">
-      <h3>Két bảo mật Firestore (chỉ mở khi đúng Gmail)</h3>
-      <p class="status-line">Dữ liệu lưu trong Firestore <code>settings/secrets</code> — không nằm trên GitHub hay file build.</p>
+      <h3>Két bảo mật Firestore (liên kết cá nhân · chỉ mở khi đúng Gmail)</h3>
+      <p class="status-line">Dữ liệu lưu trong Firestore <code>settings/secrets</code> — không nằm trên GitHub hay file build. Khóa Google AI Studio và vùng Vertex AI được quản lý tập trung ở mục <strong>Cấu hình AI</strong> phía trên.</p>
       <label for="vault-drive-folder">Thư mục Google Drive cá nhân (lưu tài liệu/PDF)</label>
       <input class="text-input" id="vault-drive-folder" type="url" placeholder="https://drive.google.com/drive/folders/…" />
       <label for="vault-calendar-embed">Google Calendar Embed URL (chế độ nhúng lịch)</label>
@@ -1051,57 +1043,25 @@ function renderSettings() {
       <input class="text-input" id="vault-jupyterlite-url" type="url" placeholder="https://…/jupyterlite/lab/index.html" />
       <label for="vault-ketcher-url">Ketcher URL tự host (tùy chọn · bỏ trống để dùng bản mặc định)</label>
       <input class="text-input" id="vault-ketcher-url" type="url" placeholder="https://…/ketcher/index.html" />
-      <label for="vault-vertex-location">Vùng Vertex AI (Firebase AI Logic)</label>
-      <input class="text-input" id="vault-vertex-location" placeholder="global" />
-      <label for="vault-gemini-key">Gemini API Key (cho Vector Embedding · tùy chọn)</label>
-      <input class="text-input" id="vault-gemini-key" type="password" autocomplete="off" placeholder="Nhập để lưu vào Firestore" />
       <button class="button button-soft" data-action="save-vault">Lưu vào Firestore Vault</button>
-    </section>
-    <section class="settings-section">
-      <h3>BYOK · nhà cung cấp AI</h3>
-      <label for="provider">Nhà cung cấp</label>
-      <select class="select-input" id="provider">
-        <option value="vertex">Vertex AI (Firebase AI Logic · không cần key)</option>
-        <option value="google">Google AI Studio</option><option value="anthropic">Anthropic</option>
-        <option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="custom">Custom</option>
-      </select>
-      <label for="api-key">API Key (chỉ lưu trong trình duyệt này)</label>
-      <input class="text-input" id="api-key" type="password" autocomplete="off" placeholder="API Key" />
-      <button class="button button-soft" data-action="save-key">Lưu khóa</button>
-      <label for="model">Model cho nhà cung cấp</label>
-      <input class="text-input" id="model" placeholder="Model ID" />
-      <label for="custom-endpoint">Custom endpoint (OpenAI-compatible)</label>
-      <input class="text-input" id="custom-endpoint" placeholder="https://…" />
-    </section>
-    <div id="theon-settings-host"></div>
-    <section class="settings-section">
-      <h3>MCP & Skills</h3>
-      <label for="mcp-url">MCP Server URL (HTTP/SSE)</label>
-      <input class="text-input" id="mcp-url" placeholder="https://…" />
-      ${skills.map((skill) => `<div class="setting-row"><label for="skill-${skill.id}">${skill.name}</label><input id="skill-${skill.id}" type="checkbox" ${skill.enabled ? 'checked' : ''} data-skill="${skill.id}" /></div>`).join('')}
-      <p class="status-line">Khóa BYOK lưu ở localStorage chỉ tiện cho máy cá nhân; khuyến nghị dùng Vertex AI hoặc Firestore Vault.</p>
     </section>`;
+  const aiSettingsHost = document.querySelector('#ai-settings-host');
+  if (aiSettingsHost) {
+    unmountAiSettings = mountAiSettings(aiSettingsHost, { onToast: toast });
+  }
   const theonSettingsHost = document.querySelector('#theon-settings-host');
   if (theonSettingsHost) {
     unmountTheonSettings = mountTheonSettings(theonSettingsHost, { onToast: toast });
   }
-  const provider = document.querySelector('#provider');
-  const keyInput = document.querySelector('#api-key');
-  const modelInput = document.querySelector('#model');
-  const endpointInput = document.querySelector('#custom-endpoint');
   const vaultDriveInput = document.querySelector('#vault-drive-folder');
   const vaultCalendarInput = document.querySelector('#vault-calendar-embed');
   const vaultJupyterInput = document.querySelector('#vault-jupyterlite-url');
   const vaultKetcherInput = document.querySelector('#vault-ketcher-url');
-  const vaultLocationInput = document.querySelector('#vault-vertex-location');
-  const vaultGeminiInput = document.querySelector('#vault-gemini-key');
   const fillVaultFields = (vault) => {
     vaultDriveInput.value = vault.driveFolderUrl ?? '';
     vaultCalendarInput.value = vault.calendarEmbedUrl ?? '';
     vaultJupyterInput.value = vault.jupyterLiteUrl ?? '';
     vaultKetcherInput.value = vault.ketcherUrl ?? '';
-    vaultLocationInput.value = vault.vertexLocation ?? 'global';
-    vaultGeminiInput.value = vault.geminiApiKey ?? '';
   };
   fillVaultFields(getCachedVault());
   document.querySelector('[data-action="save-vault"]').addEventListener('click', async () => {
@@ -1132,8 +1092,6 @@ function renderSettings() {
         calendarEmbedUrl: calendarEmbedUrl ?? '',
         jupyterLiteUrl,
         ketcherUrl,
-        vertexLocation: vaultLocationInput.value.trim() || 'global',
-        geminiApiKey: vaultGeminiInput.value.trim(),
       });
       dockStore.refreshVaultUrls();
       toast('Đã lưu vào Firestore Vault (chỉ tài khoản chủ sở hữu đọc được).');
@@ -1141,41 +1099,19 @@ function renderSettings() {
       toast(`Không thể lưu Vault: ${error.message}`);
     }
   });
-  const updateProviderFields = () => {
-    const defaults = defaultModels[provider.value] ?? defaultModels.vertex;
-    keyInput.value = getApiKey(provider.value);
-    modelInput.value = getLocalSetting(`model:${provider.value}`, defaults.model);
-  };
-  provider.value = getLocalSetting('provider', APP_MODE === 'firebase_auth' ? 'vertex' : 'google');
-  updateProviderFields();
-  endpointInput.value = getLocalSetting('custom-endpoint');
-  provider.addEventListener('change', () => {
-    saveLocalSetting('provider', provider.value);
-    updateProviderFields();
-  });
-  modelInput.addEventListener('change', () => {
-    saveLocalSetting(`model:${provider.value}`, modelInput.value.trim());
-  });
-  endpointInput.addEventListener('change', () => saveLocalSetting('custom-endpoint', endpointInput.value.trim()));
-  document.querySelector('#mcp-url').value = getLocalSetting('mcp-url');
-  document.querySelector('#mcp-url').addEventListener('change', (event) => saveLocalSetting('mcp-url', event.target.value));
-  document.querySelector('[data-action="save-key"]').addEventListener('click', () => {
-    saveApiKey(provider.value, keyInput.value);
-    toast('Đã lưu khóa trong localStorage của trình duyệt.');
-  });
   document.querySelector('[data-action="sign-in"]').addEventListener('click', async () => {
     try {
       const user = await signInWithGoogle();
       document.querySelector('#auth-status').textContent = `Đã đăng nhập: ${user.email}`;
       const vault = await loadOwnerVault();
       fillVaultFields(vault);
+      aiConfigStore.syncFromVault();
       dockStore.refreshVaultUrls();
       toast('Đã mở khóa Firestore Vault.');
     } catch (error) {
       toast(error.message);
     }
   });
-  document.querySelectorAll('[data-skill]').forEach((input) => input.addEventListener('change', () => setSkillEnabled(input.dataset.skill, input.checked)));
   getAuthState((state) => {
     const status = document.querySelector('#auth-status');
     if (!status) return;
@@ -1185,10 +1121,12 @@ function renderSettings() {
     if (state.authorized) {
       loadOwnerVault().then((vault) => {
         fillVaultFields(vault);
+        aiConfigStore.syncFromVault();
         dockStore.refreshVaultUrls();
       }).catch(() => {});
     } else {
       clearVaultCache();
+      aiConfigStore.syncFromVault();
     }
   }).catch((error) => toast(error.message));
 }
@@ -1328,6 +1266,7 @@ async function start() {
   await getAuthState((state) => {
     if (!state.authorized) {
       clearVaultCache();
+      aiConfigStore.syncFromVault();
       return;
     }
     loadData().catch((error) => toast(`Không thể tải dữ liệu: ${error.message}`));
@@ -1346,6 +1285,7 @@ async function loadData() {
   dataLoading = true;
   try {
     await loadOwnerVault().catch((error) => toast(`Không thể mở Vault: ${error.message}`));
+    aiConfigStore.syncFromVault();
     driveLibraryItems = await listDriveLibraryItems();
     syncLibraryToDock();
     dockStore.refreshVaultUrls();

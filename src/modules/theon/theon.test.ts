@@ -18,7 +18,7 @@ describe('Theon config & settings', () => {
     expect(defaults.enabledSkills).toContain('kb_librarian');
     expect(defaults.enabledSkills).toContain('exercise_architect');
     expect(defaults.mcpEnabled).toBe(false);
-    expect(THEON_MODEL_PRESETS[defaults.provider].length).toBeGreaterThan(0);
+    expect(THEON_MODEL_PRESETS[defaults.provider]?.length ?? 0).toBeGreaterThan(0);
   });
 
   it('merges valid partial JSON settings and rejects invalid shapes safely', () => {
@@ -35,6 +35,12 @@ describe('Theon config & settings', () => {
     expect(valid.model).toBe('gpt-4.1-mini');
     expect(valid.headStyle).toBe('translucent');
     expect(valid.parallaxEnabled).toBe(false);
+
+    const customProvider = parseTheonSettings(
+      JSON.stringify({ provider: 'custom-ollama', model: 'qwen2.5:14b' }),
+    );
+    expect(customProvider.provider).toBe('custom-ollama');
+    expect(customProvider.model).toBe('qwen2.5:14b');
 
     const invalid = parseTheonSettings(JSON.stringify({ provider: 'unknown_vendor', temperature: 99 }));
     expect(invalid.provider).toBe(createDefaultTheonSettings().provider);

@@ -118,3 +118,23 @@ export function getLocalSetting(name, fallback = '') {
 export function saveLocalSetting(name, value) {
   localStorage.setItem(`theolab:setting:${name}`, String(value));
 }
+
+export function removeLocalSetting(name) {
+  localStorage.removeItem(`theolab:setting:${name}`);
+}
+
+export function getJsonSetting(key) {
+  if (typeof localStorage === 'undefined') return null;
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function saveJsonSetting(key, value) {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(key, JSON.stringify(value));
+}

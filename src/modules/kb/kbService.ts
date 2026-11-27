@@ -13,8 +13,7 @@ import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { APP_MODE, firebaseConfig, isFirebaseConfigured } from '../../config/runtimeConfig.js';
 import { contentRepo } from '../../core/contentRepository';
 import { toFirestoreData } from '../../core/firestoreData';
-import { getApiKey } from '../../core/dataGateway.js';
-import { getCachedVault } from '../../core/secretsVault';
+import { resolveEmbeddingApiKey } from '../../core/aiConfigStore.svelte';
 import {
   chunkConcept,
   chunkDataset,
@@ -95,7 +94,7 @@ const pendingWorker = new Map<number, { resolve: (res: VectorWorkerResponse) => 
 let fallbackIndex: HybridIndex | null = null;
 
 function resolveGeminiKey(): string {
-  return getCachedVault().geminiApiKey || getApiKey('google') || '';
+  return resolveEmbeddingApiKey();
 }
 
 async function getFirestoreDb() {

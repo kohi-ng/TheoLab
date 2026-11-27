@@ -3,7 +3,18 @@
  */
 import { z } from 'zod';
 import { APP_MODE } from '../../config/runtimeConfig.js';
-import { getLocalSetting } from '../../core/dataGateway.js';
+import { BUILTIN_PROVIDER_CATALOG } from '../../domain/ai/providerCatalog';
+import {
+  BUILTIN_PROVIDER_IDS,
+  ProviderIdSchema,
+  type ProviderId,
+} from '../../domain/ai/schemas';
+import {
+  SEED_MODELS,
+  createDefaultAiConfig,
+  getDefaultModelForProvider,
+} from '../../domain/ai/modelRegistry';
+import { aiConfigStore } from '../../core/aiConfigStore.svelte';
 
 export const THEON_SETTINGS_STORAGE_KEY = 'theolab:theon-settings:v1';
 
@@ -39,59 +50,36 @@ export const THEON_HEAD_STYLE_LABELS: Record<TheonHeadStyle, string> = Object.fr
   triwire: 'Lưới tam giác',
 });
 
-export const THEON_PROVIDERS = [
-  'vertex',
-  'google',
-  'openai',
-  'anthropic',
-  'openrouter',
-  'custom',
-] as const;
+export const THEON_PROVIDERS = BUILTIN_PROVIDER_IDS;
 
-export type TheonProvider = (typeof THEON_PROVIDERS)[number];
+export type TheonProvider = ProviderId;
 
-export const THEON_PROVIDER_LABELS: Record<TheonProvider, string> = Object.freeze({
-  vertex: 'Vertex AI (Firebase AI Logic)',
-  google: 'Google AI Studio',
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  openrouter: 'OpenRouter',
-  custom: 'Custom (OpenAI-compatible)',
-});
+export const THEON_PROVIDER_LABELS: Record<string, string> = Object.freeze(
+  Object.fromEntries(
+    Object.values(BUILTIN_PROVIDER_CATALOG).map((meta) => [meta.id, meta.label]),
+  ),
+);
 
 export interface ModelPreset {
   id: string;
   label: string;
 }
 
-export const THEON_MODEL_PRESETS: Record<TheonProvider, readonly ModelPreset[]> = Object.freeze({
-  vertex: [
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (Khuyên dùng)' },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  ],
-  google: [
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
-  ],
-  openai: [
-    { id: 'gpt-4.1', label: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-    { id: 'o4-mini', label: 'o4-mini' },
-  ],
-  anthropic: [
-    { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-    { id: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet' },
-    { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku' },
-  ],
-  openrouter: [
-    { id: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3' },
-    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (OR)' },
-    { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (OR)' },
-  ],
-  custom: [{ id: 'custom', label: 'Custom model ID' }],
-});
+/**
+ * Derived from the centralized AI seed registry (kept for backwards compatibility with tests/callers).
+ * Live UI reads directly from `aiConfigStore.listModels()`.
+ */
+export const THEON_MODEL_PRESETS: Record<string, readonly ModelPreset[]> = Object.freeze(
+  Object.fromEntries(
+    BUILTIN_PROVIDER_IDS.map((pid) => [
+      pid,
+      SEED_MODELS.filter((m) => m.providerId === pid && !m.hidden).map((m) => ({
+        id: m.modelId,
+        label: m.label,
+      })),
+    ]),
+  ),
+);
 
 export const THEON_MATRIX_SPEEDS = ['fast', 'medium', 'slow'] as const;
 export type TheonMatrixSpeed = (typeof THEON_MATRIX_SPEEDS)[number];
@@ -101,8 +89,13 @@ import { THEON_SKILL_IDS, type TheonSkillId } from './theonSkills';
 export const DEFAULT_THEON_SYSTEM_PROMPT =
   'Bạn là Theon — hệ thống đa tác nhân học tập (Theon the Multiagent) trong TheoLab. Trả lời bằng tiếng Việt ngắn gọn, rõ ràng, sắc sảo. Hãy chủ động đọc skill bằng `read_skill` khi cần, dùng `search_kb` để truy cứu Kho Vector và kết tinh Sách 3D (`spawn_book`) hoặc Thẻ 3D (`spawn_tag`) gắn liên kết bấm được, dùng `draw_chart` để vẽ biểu đồ dữ liệu (cột, đường, hai trục, tròn, vành khuyên, scatter, miền) trực tiếp lên màn hình hộp, dùng `open_exercise_tab` khi người dùng muốn luyện tập/làm bài tập, và dùng `set_expression` để chọn biểu cảm khuôn mặt phù hợp.';
 
+const KnownOrCustomProviderSchema = ProviderIdSchema.refine(
+  (id) => (BUILTIN_PROVIDER_IDS as readonly string[]).includes(id) || id.startsWith('custom-'),
+  { message: 'Nhà cung cấp không hợp lệ.' },
+);
+
 export const TheonSettingsSchema = z.object({
-  provider: z.enum(THEON_PROVIDERS),
+  provider: KnownOrCustomProviderSchema,
   model: z.string().min(1).max(160),
   temperature: z.number().min(0).max(1.2),
   systemPrompt: z.string().max(4000),
@@ -122,31 +115,20 @@ export const TheonSettingsSchema = z.object({
 
 export type TheonSettings = z.infer<typeof TheonSettingsSchema>;
 
-function safeGetLocalSetting(name: string, fallback = ''): string {
-  if (typeof localStorage === 'undefined') return fallback;
-  try {
-    return getLocalSetting(name, fallback);
-  } catch {
-    return fallback;
-  }
-}
-
 export function defaultModelForProvider(provider: TheonProvider): string {
-  const fromGlobal = safeGetLocalSetting(`model:${provider}`, '');
-  if (fromGlobal && typeof fromGlobal === 'string') return fromGlobal;
-  return THEON_MODEL_PRESETS[provider][0]?.id ?? 'gemini-2.5-flash';
+  const fromStore = aiConfigStore.getDefaultModelForProvider(provider)?.modelId;
+  if (fromStore) return fromStore;
+  const fallback = getDefaultModelForProvider(createDefaultAiConfig(APP_MODE), provider)?.modelId;
+  return fallback ?? 'gemini-2.5-flash';
 }
 
 export function createDefaultTheonSettings(): TheonSettings {
-  const fallbackProvider: TheonProvider = APP_MODE === 'firebase_auth' ? 'vertex' : 'google';
-  const storedGlobal = safeGetLocalSetting('provider', fallbackProvider);
-  const provider: TheonProvider = (THEON_PROVIDERS as readonly string[]).includes(storedGlobal)
-    ? (storedGlobal as TheonProvider)
-    : fallbackProvider;
+  const defaults = aiConfigStore.defaults;
+  const provider = defaults.providerId;
 
   return {
     provider,
-    model: defaultModelForProvider(provider),
+    model: defaults.modelId || defaultModelForProvider(provider),
     temperature: 0.35,
     systemPrompt: DEFAULT_THEON_SYSTEM_PROMPT,
     autoContext: true,

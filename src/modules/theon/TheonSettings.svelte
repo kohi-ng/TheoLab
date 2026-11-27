@@ -1,30 +1,37 @@
 <script lang="ts">
-  import { getApiKey } from '../../core/dataGateway.js';
-  import { getCachedVault } from '../../core/secretsVault';
   import { APP_MODE } from '../../config/runtimeConfig.js';
+  import { aiConfigStore } from '../../core/aiConfigStore.svelte';
   import {
     THEON_EXPRESSION_LABELS,
     THEON_EXPRESSIONS,
     THEON_HEAD_STYLE_LABELS,
     THEON_HEAD_STYLES,
-    THEON_MODEL_PRESETS,
-    THEON_PROVIDER_LABELS,
-    THEON_PROVIDERS,
     type TheonExpression,
     type TheonHeadStyle,
     type TheonMatrixSpeed,
-    type TheonProvider,
   } from './theonConfig';
   import { THEON_SKILLS, type TheonSkillId } from './theonSkills';
   import { theonStore } from './theonStore.svelte';
 
   let { onToast }: { onToast?: (message: string) => void } = $props();
 
+  let modelSearch = $state('');
+
   const settings = $derived(theonStore.settings);
-  const presets = $derived(THEON_MODEL_PRESETS[settings.provider] ?? []);
-  const selectedPreset = $derived(
-    presets.some((item) => item.id === settings.model) ? settings.model : '__custom__',
-  );
+  const enabledProviders = $derived(aiConfigStore.enabledProviders);
+  const groupedModels = $derived.by(() => {
+    const visible = aiConfigStore.listModels({
+      includeHidden: false,
+      onlyEnabledProviders: true,
+      query: modelSearch,
+    });
+    return enabledProviders
+      .map((provider) => ({
+        provider,
+        models: visible.filter((m) => m.providerId === provider.id),
+      }))
+      .filter((group) => group.models.length > 0);
+  });
 
   function toggleTheonSkill(skillId: TheonSkillId, checked: boolean) {
     const current = new Set(settings.enabledSkills);
@@ -44,30 +51,26 @@
   }
 
   const keyReadyNote = $derived.by(() => {
+    void aiConfigStore.keyRevision;
+    const providerLabel = aiConfigStore.getProviderLabel(settings.provider);
     if (settings.provider === 'vertex') {
       return APP_MODE === 'firebase_auth'
         ? 'Dùng Vertex AI (Firebase AI Logic) qua Gmail chủ sở hữu — không cần API key.'
         : 'Đang ở chế độ dev_mock: hãy chọn Google AI Studio / OpenAI / OpenRouter hoặc chuyển firebase_auth để dùng Vertex AI.';
     }
-    const vault = getCachedVault();
-    const hasKey = Boolean(
-      (settings.provider === 'google' ? vault.geminiApiKey : '') || getApiKey(settings.provider),
-    );
-    return hasKey
-      ? `Đã có khóa API cho ${THEON_PROVIDER_LABELS[settings.provider]}.`
-      : `Chưa có khóa API cho ${THEON_PROVIDER_LABELS[settings.provider]} — nhập khóa ở mục BYOK hoặc Firestore Vault bên trên.`;
+    const configured = aiConfigStore.isProviderConfigured(settings.provider);
+    return configured
+      ? `Đã sẵn sàng cấu hình cho ${providerLabel}.`
+      : `Chưa có khóa API hoặc Base URL cho ${providerLabel} — thiết lập ở mục Cấu hình AI bên trên.`;
   });
 
   function handleProviderChange(event: Event) {
-    const provider = (event.currentTarget as HTMLSelectElement).value as TheonProvider;
+    const provider = (event.currentTarget as HTMLSelectElement).value;
     theonStore.setProvider(provider);
   }
 
-  function handlePresetChange(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (value !== '__custom__') {
-      theonStore.updateSettings({ model: value });
-    }
+  function handleSelectRegistryModel(providerId: string, modelId: string) {
+    theonStore.updateSettings({ provider: providerId, model: modelId });
   }
 
   function handleModelInput(event: Event) {
@@ -89,7 +92,7 @@
 <section class="settings-section theon-settings">
   <h3>Nhân dạng Theon (Planar AI)</h3>
   <p class="status-line">
-    Cấu hình model AI riêng, biểu cảm và hiển thị 3D cho Theon. Khóa API dùng chung từ mục Firestore Vault / BYOK phía trên.
+    Cấu hình model AI riêng, biểu cảm và hiển thị 3D cho Theon. Danh sách model &amp; khóa API dùng chung từ mục Cấu hình AI phía trên.
   </p>
 
   <label for="theon-provider">Nhà cung cấp AI cho Theon</label>
@@ -99,26 +102,45 @@
     value={settings.provider}
     onchange={handleProviderChange}
   >
-    {#each THEON_PROVIDERS as provider (provider)}
-      <option value={provider}>{THEON_PROVIDER_LABELS[provider]}</option>
+    {#each enabledProviders as provider (provider.id)}
+      <option value={provider.id}>{provider.label}</option>
     {/each}
   </select>
   <p class="status-line">{keyReadyNote}</p>
 
-  <label for="theon-model-preset">Chọn nhanh Model</label>
-  <select
-    id="theon-model-preset"
-    class="select-input"
-    value={selectedPreset}
-    onchange={handlePresetChange}
-  >
-    {#each presets as preset (preset.id)}
-      <option value={preset.id}>{preset.label}</option>
+  <label for="theon-model-search">Chọn nhanh Model từ danh mục chung (nhóm theo nhà cung cấp)</label>
+  <input
+    id="theon-model-search"
+    class="text-input"
+    type="search"
+    placeholder="Tìm nhanh theo tên model hoặc nhà cung cấp…"
+    bind:value={modelSearch}
+  />
+  <div class="theon-model-picker" role="listbox" aria-label="Danh mục model AI cho Theon">
+    {#each groupedModels as group (group.provider.id)}
+      <p class="theon-model-group">{group.provider.label}</p>
+      {#each group.models as entry (entry.id)}
+        <button
+          type="button"
+          class="theon-model-option"
+          class:selected={settings.provider === entry.providerId && settings.model === entry.modelId}
+          onclick={() => handleSelectRegistryModel(entry.providerId, entry.modelId)}
+        >
+          <span>
+            <strong>{entry.label}</strong>
+            <small>{entry.modelId}</small>
+          </span>
+          {#if settings.provider === entry.providerId && settings.model === entry.modelId}
+            <span class="theon-model-active">Đang dùng</span>
+          {/if}
+        </button>
+      {/each}
+    {:else}
+      <p class="status-line">Không có model khớp từ khóa.</p>
     {/each}
-    <option value="__custom__">Model ID tùy chỉnh…</option>
-  </select>
+  </div>
 
-  <label for="theon-model-id">Model ID gửi API</label>
+  <label for="theon-model-id">Model ID gửi API (có thể nhập tay)</label>
   <input
     id="theon-model-id"
     class="text-input"
@@ -392,5 +414,55 @@
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 6px;
+  }
+
+  .theon-model-picker {
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 14px;
+    background: var(--surface-card);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .theon-model-group {
+    margin: 6px 6px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .theon-model-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    border: 0;
+    border-radius: 11px;
+    padding: 7px 10px;
+    background: transparent;
+    text-align: left;
+    font-size: 12px;
+  }
+
+  .theon-model-option:hover,
+  .theon-model-option.selected {
+    background: #fff;
+  }
+
+  .theon-model-option small {
+    display: block;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .theon-model-active {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--success);
+    white-space: nowrap;
   }
 </style>

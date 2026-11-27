@@ -1,19 +1,16 @@
-import { APP_MODE } from '../../config/runtimeConfig.js';
-import { getApiKey, getLocalSetting } from '../../core/dataGateway.js';
 import { getActiveContext, subscribeContext, updateContext } from '../../core/contextBus.js';
+import { aiConfigStore } from '../../core/aiConfigStore.svelte.ts';
 import { checkNumeric, startCountdown } from '../assessmentEngine/assessmentEngine.js';
 
-const modelCatalog = [
-  { provider: 'vertex', model: 'gemini-3.8-flash', label: 'Vertex AI · Gemini 3.8 Flash', description: 'Qua Firebase, không cần API Key' },
-  { provider: 'google', model: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Suy luận sâu, giải bài phức tạp' },
-  { provider: 'google', model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Phản hồi nhanh, ôn tập hằng ngày' },
-  { provider: 'anthropic', model: 'claude-sonnet-4-20250514', label: 'Claude Sonnet', description: 'Phân tích dài, diễn đạt tự nhiên' },
-  { provider: 'openai', model: 'gpt-4.1', label: 'GPT-4.1', description: 'Học tập và giải thích đa dụng' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-r1', label: 'DeepSeek R1', description: 'Suy luận từng bước' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3', description: 'Nhanh, hiệu quả cho hội thoại' },
-  { provider: 'openrouter', model: 'openrouter-custom', label: 'OpenRouter / model khác', description: 'Nhập model OpenRouter tùy chọn' },
-  { provider: 'custom', model: 'custom', label: 'Custom model', description: 'Endpoint tương thích OpenAI trong Cấu hình' },
-];
+export function getModelCatalog() {
+  return aiConfigStore.listModels({ onlyEnabledProviders: true }).map((entry) => ({
+    id: entry.id,
+    provider: entry.providerId,
+    model: entry.modelId,
+    label: entry.label,
+    description: entry.description ?? entry.modelId,
+  }));
+}
 
 function makeButton(label, action, className = 'composer-action') {
   const button = document.createElement('button');
@@ -153,14 +150,14 @@ function renderTuning(popover, state, onChange) {
   temperatureLabel.className = 'popover-label range-label';
   temperatureLabel.append(document.createTextNode('Độ sáng tạo '));
   const temperatureValue = document.createElement('span');
-  temperatureValue.textContent = Number(state.temperature ?? 0.3).toFixed(1);
+  temperatureValue.textContent = Number(state.temperature ?? aiConfigStore.defaults.temperature ?? 0.3).toFixed(1);
   temperatureLabel.append(temperatureValue);
   const temperature = document.createElement('input');
   temperature.type = 'range';
   temperature.min = '0';
   temperature.max = '1.2';
   temperature.step = '0.1';
-  temperature.value = String(state.temperature ?? 0.3);
+  temperature.value = String(state.temperature ?? aiConfigStore.defaults.temperature ?? 0.3);
   temperature.addEventListener('input', () => {
     temperatureValue.textContent = Number(temperature.value).toFixed(1);
   });
@@ -208,52 +205,90 @@ function renderTuning(popover, state, onChange) {
 
 function renderModels(popover, state, onChange) {
   popover.replaceChildren();
-  let currentProvider = '';
-  for (const model of modelCatalog) {
-    if (model.provider !== currentProvider) {
-      currentProvider = model.provider;
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'search-input model-picker-search';
+  search.placeholder = 'Tìm model hoặc nhà cung cấp…';
+  search.setAttribute('aria-label', 'Tìm kiếm model AI');
+
+  const listHost = document.createElement('div');
+
+  const drawList = () => {
+    listHost.replaceChildren();
+    const query = search.value.trim();
+    const visibleModels = aiConfigStore.listModels({
+      includeHidden: false,
+      onlyEnabledProviders: true,
+      query,
+    });
+    const enabledProviders = aiConfigStore.enabledProviders;
+
+    let renderedAny = false;
+    for (const provider of enabledProviders) {
+      const groupModels = visibleModels.filter((m) => m.providerId === provider.id);
+      if (!groupModels.length) continue;
+      renderedAny = true;
+
       const group = document.createElement('p');
       group.className = 'model-group';
-      group.textContent = {
-        vertex: 'Vertex AI',
-        google: 'Google AI',
-        anthropic: 'Anthropic',
-        openai: 'OpenAI',
-        openrouter: 'OpenRouter',
-        custom: 'Custom',
-      }[currentProvider];
-      popover.append(group);
-    }
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'model-option';
-    const copy = document.createElement('span');
-    copy.className = 'model-copy';
-    const name = document.createElement('strong');
-    name.textContent = model.label;
-    const description = document.createElement('small');
-    description.textContent = model.description;
-    copy.append(name, description);
-    const isVertex = model.provider === 'vertex';
-    const configured = isVertex ? APP_MODE === 'firebase_auth' : Boolean(getApiKey(model.provider));
-    const status = document.createElement('span');
-    status.className = `model-status${configured ? ' configured' : ''}`;
-    status.title = isVertex
-      ? (configured ? 'Dùng đăng nhập Firebase' : 'Cần chế độ firebase_auth')
-      : (configured ? 'API Key đã được nhập' : 'Chưa có API Key');
-    button.append(copy, status);
-    button.addEventListener('click', () => {
-      if (!configured) {
-        window.dispatchEvent(new CustomEvent('theolab:open-settings'));
-        return;
+      group.textContent = provider.label;
+      listHost.append(group);
+
+      const configured = aiConfigStore.isProviderConfigured(provider.id);
+      for (const entry of groupModels) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `model-option${
+          state.provider === entry.providerId && state.model === entry.modelId ? ' selected' : ''
+        }`;
+        const copy = document.createElement('span');
+        copy.className = 'model-copy';
+        const name = document.createElement('strong');
+        name.textContent = entry.label;
+        const description = document.createElement('small');
+        description.textContent = entry.description ? `${entry.modelId} · ${entry.description}` : entry.modelId;
+        copy.append(name, description);
+
+        const status = document.createElement('span');
+        status.className = `model-status${configured ? ' configured' : ''}`;
+        status.title = provider.kind === 'vertex'
+          ? (configured ? 'Dùng đăng nhập Firebase' : 'Cần chế độ firebase_auth')
+          : (configured ? 'Đã sẵn sàng' : 'Chưa cấu hình khóa / Base URL');
+        button.append(copy, status);
+        button.addEventListener('click', () => {
+          if (!configured) {
+            window.dispatchEvent(new CustomEvent('theolab:open-settings'));
+            return;
+          }
+          onChange({
+            ...state,
+            provider: entry.providerId,
+            model: entry.modelId,
+            modelLabel: entry.label,
+          });
+        });
+        listHost.append(button);
       }
-      const selectedModel = model.model === 'openrouter-custom'
-        ? getLocalSetting('model:openrouter', 'deepseek/deepseek-chat-v3-0324')
-        : model.model;
-      onChange({ ...state, provider: model.provider, model: selectedModel, modelLabel: model.label });
+    }
+
+    if (!renderedAny) {
+      const empty = document.createElement('p');
+      empty.className = 'status-line';
+      empty.textContent = 'Không tìm thấy model phù hợp. Mở Cấu hình → Model để thêm mới.';
+      listHost.append(empty);
+    }
+
+    const manageBtn = makeButton('⚙ Quản lý danh mục model…', 'open-model-settings', 'picker-button');
+    manageBtn.addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('theolab:open-settings'));
     });
-    popover.append(button);
-  }
+    listHost.append(manageBtn);
+  };
+
+  search.addEventListener('input', drawList);
+  popover.append(search, listHost);
+  drawList();
 }
 
 export function mountChatComposer(root, {
@@ -405,8 +440,6 @@ export function renderMessage(root, message, { onExerciseResult } = {}) {
   root.scrollTop = root.scrollHeight;
   return bubble;
 }
-
-export { modelCatalog };
 
 export function clearMessages(root) {
   root.querySelectorAll('.chat-bubble').forEach((bubble) => bubble.cleanup?.());
