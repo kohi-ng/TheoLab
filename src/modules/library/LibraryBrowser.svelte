@@ -29,6 +29,8 @@
     type LibrarySortField,
   } from '../../domain/library/schemas';
 
+  import DriveImportDialog, { type ImportTabMode } from './DriveImportDialog.svelte';
+
   let {
     mode = 'full',
     onOpenItem,
@@ -51,14 +53,14 @@
   let tagFilter = $state<string>('all');
   let mobileSidebarOpen = $state(false);
 
-  // Quick add link form state
-  let showAddLink = $state(false);
-  let addTitle = $state('');
-  let addUrl = $state('');
-  let addFolderId = $state<string>('');
-  let addTagsRaw = $state('');
-  let addDescription = $state('');
-  let addingItem = $state(false);
+  // Unified Google Drive import dialog (Picker + Manual Link + Create Doc/Sheet)
+  let importDialogOpen = $state(false);
+  let importDialogTab = $state<ImportTabMode>('picker');
+
+  function openImportDialog(tab: ImportTabMode) {
+    importDialogTab = tab;
+    importDialogOpen = true;
+  }
 
   // Folder management state
   let showNewFolderForm = $state(false);
@@ -190,34 +192,6 @@
   function clearSelection() {
     selectedIds = {};
     showBulkRename = false;
-  }
-
-  async function handleAddDriveLink(event: SubmitEvent) {
-    event.preventDefault();
-    if (addingItem) return;
-    addingItem = true;
-    try {
-      const tags = normalizeTags(addTagsRaw.split(','));
-      const created = await libraryStore.createItem({
-        title: addTitle,
-        url: addUrl,
-        source: 'drive',
-        folderId: addFolderId || null,
-        tags,
-        description: addDescription,
-      });
-      addTitle = '';
-      addUrl = '';
-      addTagsRaw = '';
-      addDescription = '';
-      showAddLink = false;
-      onToast?.(`Đã thêm "${created.title}" vào Thư viện.`);
-      onOpenItem(created);
-    } catch (error) {
-      onToast?.((error as Error).message);
-    } finally {
-      addingItem = false;
-    }
   }
 
   async function handleCreateFolder(event: SubmitEvent) {
@@ -477,28 +451,16 @@
           ↗ Mở thư mục Drive cá nhân
         </a>
       {/if}
-      <button type="button" class="tree-item" onclick={() => (showAddLink = !showAddLink)}>
-        {showAddLink ? '✕ Đóng form thêm link' : '＋ Thêm tài liệu Google Drive'}
+      <button type="button" class="tree-item" onclick={() => openImportDialog('picker')}>
+        ☁ Chọn từ Google Drive
+      </button>
+      <button type="button" class="tree-item" onclick={() => openImportDialog('create')}>
+        ＋ Tạo Google Doc / Sheet mới
+      </button>
+      <button type="button" class="tree-item" onclick={() => openImportDialog('link')}>
+        🔗 Dán liên kết Drive
       </button>
     </div>
-
-    {#if showAddLink}
-      <form class="drawer-add-form" onsubmit={handleAddDriveLink}>
-        <input class="search-input compact-field" type="text" required placeholder="Tên tài liệu…" bind:value={addTitle} />
-        <input class="search-input compact-field" type="url" required placeholder="https://drive.google.com/…" bind:value={addUrl} />
-        {#if flatFolders.length > 0}
-          <select class="select-input compact-field" bind:value={addFolderId} aria-label="Chọn thư mục">
-            <option value="">Chưa phân thư mục</option>
-            {#each flatFolders as node (node.folder.id)}
-              <option value={node.folder.id}>{'— '.repeat(node.depth)}{node.folder.name}</option>
-            {/each}
-          </select>
-        {/if}
-        <button type="submit" class="pill-btn primary" disabled={addingItem}>
-          {addingItem ? 'Đang lưu…' : 'Lưu vào Thư viện'}
-        </button>
-      </form>
-    {/if}
 
     {#if flatFolders.length > 0}
       <select class="select-input compact-field" bind:value={folderFilter} aria-label="Lọc theo thư mục">
@@ -553,7 +515,7 @@
       <div>
         <h1 class="page-title">Thư viện</h1>
         <p class="page-subtitle">
-          Quản lý tài liệu cá nhân theo thư mục &amp; thẻ, mở trên canvas, chia đôi khung phải hoặc đính kèm vào Chat AI.
+          Quản lý tài liệu cá nhân theo thư mục &amp; thẻ, chọn trực tiếp từ Google Drive, mở trên canvas hoặc chia đôi khung phải.
         </p>
       </div>
       <div class="header-actions">
@@ -569,53 +531,20 @@
         >
           {aiSuggesting ? 'Đang gợi ý…' : '✦ AI gợi ý phân loại'}
         </button>
-        <button type="button" class="pill-btn primary" onclick={() => (showAddLink = !showAddLink)}>
-          {showAddLink ? 'Đóng form' : '＋ Thêm tài liệu Drive'}
+        <button type="button" class="pill-btn" onclick={() => openImportDialog('create')}>
+          ＋ Tạo Doc / Sheet
+        </button>
+        <button type="button" class="pill-btn" onclick={() => openImportDialog('link')}>
+          🔗 Dán link
+        </button>
+        <button type="button" class="pill-btn primary" onclick={() => openImportDialog('picker')}>
+          ☁ Chọn từ Google Drive
         </button>
       </div>
     </header>
 
     {#if libraryStore.error}
       <div class="error-banner">{libraryStore.error}</div>
-    {/if}
-
-    {#if showAddLink}
-      <form class="surface-panel add-form" onsubmit={handleAddDriveLink}>
-        <strong>Thêm tài liệu Google Drive bằng liên kết</strong>
-        <div class="form-grid">
-          <label class="field-box">
-            <span>Tên tài liệu</span>
-            <input class="text-input white-field" type="text" required placeholder="VD: Đề thi Hóa phân tích 2026" bind:value={addTitle} />
-          </label>
-          <label class="field-box">
-            <span>Liên kết Google Drive / Docs / Sheets / Slides</span>
-            <input class="text-input white-field" type="url" required placeholder="https://drive.google.com/file/d/…" bind:value={addUrl} />
-          </label>
-          <label class="field-box">
-            <span>Thư mục</span>
-            <select class="select-input white-field" bind:value={addFolderId}>
-              <option value="">Chưa phân thư mục</option>
-              {#each flatFolders as node (node.folder.id)}
-                <option value={node.folder.id}>{'— '.repeat(node.depth)}{node.folder.name}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="field-box">
-            <span>Thẻ (phân cách dấu phẩy)</span>
-            <input class="text-input white-field" type="text" placeholder="hóa phân tích, chương 3, đề thi" bind:value={addTagsRaw} />
-          </label>
-        </div>
-        <label class="field-box">
-          <span>Ghi chú (tùy chọn)</span>
-          <input class="text-input white-field" type="text" placeholder="Ghi chú ngắn gọn về tài liệu" bind:value={addDescription} />
-        </label>
-        <div class="row-actions">
-          <button type="submit" class="pill-btn primary" disabled={addingItem}>
-            {addingItem ? 'Đang lưu…' : 'Lưu vào Thư viện'}
-          </button>
-          <button type="button" class="pill-btn" onclick={() => (showAddLink = false)}>Hủy</button>
-        </div>
-      </form>
     {/if}
 
     <!-- AI Categorization Review Panel (user confirmation required) -->
@@ -1287,6 +1216,26 @@
   </div>
 {/if}
 
+{#if importDialogOpen}
+  <DriveImportDialog
+    initialTab={importDialogTab}
+    defaultFolderId={
+      folderFilter !== 'all' &&
+      folderFilter !== BUILTIN_FOLDER_SENTINEL &&
+      folderFilter !== UNFILED_FOLDER_SENTINEL
+        ? folderFilter
+        : null
+    }
+    onClose={() => (importDialogOpen = false)}
+    onImported={(items) => {
+      if (items.length === 1 && items[0]) {
+        onOpenItem(items[0]);
+      }
+    }}
+    {onToast}
+  />
+{/if}
+
 <style>
   /* Shared controls */
   .pill-btn {
@@ -1375,15 +1324,6 @@
     gap: 4px;
   }
 
-  .drawer-add-form {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px;
-    border-radius: 14px;
-    background: var(--surface-elevated);
-  }
-
   .drawer-groups {
     display: flex;
     flex-direction: column;
@@ -1454,10 +1394,6 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-  }
-
-  .add-form strong {
-    font-size: 14px;
   }
 
   .form-grid {

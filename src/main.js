@@ -55,6 +55,7 @@ import { extractCalendarEmbedUrl, isAllowedAppUrl } from './modules/apps/appCata
 import { mountTheonSettings } from './modules/theon/mountTheon.ts';
 import { aiConfigStore } from './core/aiConfigStore.svelte.ts';
 import { mountAiSettings } from './modules/settings/mountAiSettings.ts';
+import { fetchBoundedDriveTextForChat } from './core/googleDriveApi.ts';
 
 const app = document.querySelector('#app');
 let lesson;
@@ -636,19 +637,31 @@ function makeLibraryCallbacks() {
       openLibraryItemInDock(item);
       if (mobileLayout.matches) setDrawer(false);
     },
-    onAttachToChat: (item) => {
-      attachLibraryContext({
-        id: item.id,
-        title: item.title,
-        type: item.kind ?? item.type ?? 'drive-file',
-        sourceLabel: item.sourceLabel ?? item.kind ?? 'Thư viện',
-        content: String(
-          item.contextText
-            ?? (item.url
-              ? `${item.title}: ${item.url}${item.description ? `\n${item.description}` : ''}`
-              : `${item.title}${item.description ? `\n${item.description}` : ''}`),
-        ).slice(0, 16000),
-      }).catch((error) => toast(error.message));
+    onAttachToChat: async (item) => {
+      try {
+        let excerpt = item.contextText ?? '';
+        if (item.source === 'drive' && item.driveFileId) {
+          const fetched = await fetchBoundedDriveTextForChat({
+            driveFileId: item.driveFileId,
+            mimeType: item.mimeType,
+          });
+          if (fetched) {
+            excerpt = `${item.title} (${item.sourceLabel ?? item.kind}):\n${fetched}`;
+          }
+        }
+        const fallback = item.url
+          ? `${item.title}: ${item.url}${item.description ? `\n${item.description}` : ''}`
+          : `${item.title}${item.description ? `\n${item.description}` : ''}`;
+        await attachLibraryContext({
+          id: item.id,
+          title: item.title,
+          type: item.kind ?? item.type ?? 'drive-file',
+          sourceLabel: item.sourceLabel ?? item.kind ?? 'Thư viện',
+          content: String(excerpt || fallback).slice(0, 16000),
+        });
+      } catch (error) {
+        toast(error.message);
+      }
     },
     onToast: toast,
   };

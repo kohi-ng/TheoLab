@@ -50,7 +50,9 @@ class DockStore {
 
   private layoutListeners = new Set<(snapshot: DockLayoutSnapshot) => void>();
   private toastListeners = new Set<(message: string) => void>();
-  private libraryMutateHandler: ((input: { title: string; url: string }) => Promise<LibraryDockInput>) | null = null;
+  private libraryMutateHandler:
+    | ((input: { title: string; url: string; driveFileId?: string; mimeType?: string }) => Promise<LibraryDockInput>)
+    | null = null;
 
   constructor() {
     this.restoreFromStorage();
@@ -96,15 +98,24 @@ class DockStore {
 
   setLibraryBridge(
     items: LibraryDockInput[],
-    onSaveDriveItem?: (input: { title: string; url: string }) => Promise<LibraryDockInput>,
+    onSaveDriveItem?: (input: {
+      title: string;
+      url: string;
+      driveFileId?: string;
+      mimeType?: string;
+    }) => Promise<LibraryDockInput>,
   ) {
     this.libraryItems = [...items];
     if (onSaveDriveItem) this.libraryMutateHandler = onSaveDriveItem;
   }
 
-  async saveToLibrary(title: string, url: string): Promise<LibraryDockInput | null> {
+  async saveToLibrary(
+    title: string,
+    url: string,
+    extra: { driveFileId?: string; mimeType?: string } = {},
+  ): Promise<LibraryDockInput | null> {
     if (!this.libraryMutateHandler) return null;
-    const created = await this.libraryMutateHandler({ title, url });
+    const created = await this.libraryMutateHandler({ title, url, ...extra });
     return created;
   }
 

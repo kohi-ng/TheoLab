@@ -95,7 +95,14 @@
       });
       newFileTitleDrafts = { ...newFileTitleDrafts, [tab.id]: '' };
       try {
-        await dockStore.saveToLibrary(created.name, created.url);
+        const mimeType =
+          kind === 'spreadsheets'
+            ? 'application/vnd.google-apps.spreadsheet'
+            : 'application/vnd.google-apps.document';
+        await dockStore.saveToLibrary(created.name, created.url, {
+          driveFileId: created.id,
+          mimeType,
+        });
         onToast?.(`Đã tạo "${created.name}" trên Google Drive và lưu vào Thư viện.`);
       } catch {
         onToast?.(`Đã tạo và mở "${created.name}" trong tab.`);

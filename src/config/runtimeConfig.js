@@ -23,3 +23,11 @@ export const isFirebaseConfigured = () =>
   && Object.values(firebaseConfig).every(
     (value) => typeof value === 'string' && !value.startsWith('YOUR_'),
   );
+
+export const googlePickerConfig = {
+  apiKey: env.VITE_GOOGLE_PICKER_API_KEY || '',
+  appId: env.VITE_GOOGLE_PICKER_APP_ID || '',
+};
+
+export const isGooglePickerConfigured = () =>
+  Boolean(googlePickerConfig.apiKey.trim() && googlePickerConfig.appId.trim());

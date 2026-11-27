@@ -45,6 +45,27 @@ does not match `OWNER_EMAIL` is immediately signed out.
 GitHub Pages is public static hosting. Do not commit private lesson content or
 expect browser-held API keys/Firebase client settings to be secret.
 
+## Configure Google Picker API & Google Drive (Library Import)
+
+To pick files and folders directly from Google Drive inside **Thư viện** (using the narrow `drive.file` OAuth scope):
+
+1. Open the Google Cloud Console for the same project used by your Firebase app.
+2. Go to **APIs & Services → Library** and enable both:
+   - **Google Picker API**
+   - **Google Drive API** (needed for creating Google Docs/Sheets and expanding picked Drive folders)
+3. Go to **APIs & Services → Credentials → Create credentials → API key**:
+   - Under **Application restrictions**, select **Websites (HTTP referrers)** and allow only your origins:
+     - `http://localhost:*/*` (local dev)
+     - `https://<your-username>.github.io/TheoLab/*` (GitHub Pages)
+   - Under **API restrictions**, restrict the key to **Google Picker API** only.
+4. Find your **Project Number** (numeric) in **Project Settings** — this is your Google Picker App ID.
+5. Add both variables to `.env.local` (and GitHub Actions **Secrets** for CI deployment):
+   - `VITE_GOOGLE_PICKER_API_KEY=<your-referrer-restricted-browser-api-key>`
+   - `VITE_GOOGLE_PICKER_APP_ID=<your-google-cloud-project-number>`
+6. Deploy owner-only Firestore Rules covering `library_items/{itemId}` and `library_folders/{folderId}`.
+
+Picker is lazy-loaded only when you click **Chọn từ Google Drive**. In `dev_mock` mode (or if Picker env vars are omitted), you can still add Drive documents manually via **Dán liên kết**.
+
 ## Runtime modes and BYOK
 
 - `dev_mock`: default local lesson loaded from `src/mocks/sampleLesson.json`;
@@ -52,9 +73,12 @@ expect browser-held API keys/Firebase client settings to be secret.
 - `firebase_auth`: Google owner sign-in and Firestore persistence. Configure
   Firebase and deploy owner-only rules before switching.
 
-Change the mode in `src/config/runtimeConfig.js`. API keys can be entered in
-**Cấu hình** and are stored only in this browser's `localStorage`; they are not
-encrypted. Avoid shared devices, clear keys when no longer needed, and do not
-commit them. The Agent Loop currently supports direct browser requests to
-OpenAI, Anthropic, and Google AI; provider CORS policies, quotas, and direct
-browser key exposure apply. Only send prompts/context you agree to disclose.
+Change the mode via `VITE_APP_MODE` in `.env.local` (read by `src/config/runtimeConfig.js`).
+AI providers, models, defaults, profiles, and BYOK API keys are managed in **Cấu hình → Cấu hình AI**.
+API keys are stored in this browser's `localStorage` (not encrypted); the unified Google AI Studio
+key is shared between Google AI Studio chat/Theon and Vector Embedding (`gemini-embedding-2`) and
+can optionally sync to the owner-only Firestore Vault (`settings/secrets`) in `firebase_auth`.
+Avoid shared devices, clear keys when no longer needed, and do not commit them. The Agent Loop
+supports direct browser requests to Vertex AI (Firebase AI Logic), Google AI Studio, Anthropic,
+OpenAI, OpenRouter, and custom OpenAI-compatible endpoints; provider CORS policies, quotas, and
+direct browser key exposure apply. Only send prompts/context you agree to disclose.

@@ -133,3 +133,101 @@ export async function createGoogleWorkspaceFile(options: {
     url: buildGoogleEditUrl(options.kind, created.id),
   };
 }
+
+export interface DriveFolderChild {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink?: string;
+}
+
+async function fetchDriveWithRetry(url: string): Promise<Response> {
+  let token = await requestGoogleDriveToken();
+  let response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 401) {
+    token = await requestGoogleDriveToken({ forceRefresh: true });
+    response = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }
+  return response;
+}
+
+/**
+ * Lists non-trashed files directly inside a Google Drive folder (excluding nested subfolders).
+ * Respects `drive.file` scope: if Drive returns 0 items due to scope limits, callers inform the user cleanly.
+ */
+export async function listDriveFolderFiles(folderId: string): Promise<DriveFolderChild[]> {
+  if (APP_MODE !== 'firebase_auth') {
+    throw new Error('Duyệt tệp trong thư mục Google Drive cần chế độ firebase_auth và đăng nhập Google.');
+  }
+  const safeId = folderId.trim().replace(/['\\]/g, '');
+  if (!safeId) throw new Error('Mã thư mục Google Drive không hợp lệ.');
+
+  const q = encodeURIComponent(
+    `'${safeId}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
+  );
+  const fields = encodeURIComponent('files(id,name,mimeType,webViewLink)');
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=100&orderBy=name`;
+
+  const response = await fetchDriveWithRetry(url);
+  if (!response.ok) {
+    const err = await parseDriveError(response);
+    if (err.reason === 'accessNotConfigured') {
+      throw new Error(
+        'Google Drive API chưa được bật trên Google Cloud project. Hãy bật "Google Drive API" trong Google Cloud Console.',
+      );
+    }
+    throw new Error(`Không thể đọc danh sách tệp trong thư mục Drive: ${err.message}`);
+  }
+
+  const data = (await response.json()) as { files?: DriveFolderChild[] };
+  return (data.files ?? []).filter((f) => Boolean(f.id && f.name));
+}
+
+function sanitizeContextExcerpt(raw: string, maxChars = 14_000): string {
+  // Strip control characters except newlines/tabs and clamp length strictly.
+  return raw
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .trim()
+    .slice(0, maxChars);
+}
+
+/**
+ * Explicitly invoked ONLY when the user clicks "Đính kèm vào Chat AI" on a Drive item.
+ * Never called during library import. Returns null cleanly for binary files, dev_mock,
+ * or when Drive scope/network does not permit text export.
+ */
+export async function fetchBoundedDriveTextForChat(options: {
+  driveFileId?: string;
+  mimeType?: string;
+}): Promise<string | null> {
+  if (APP_MODE !== 'firebase_auth' || !options.driveFileId) return null;
+  const id = encodeURIComponent(options.driveFileId);
+  const mime = (options.mimeType ?? '').toLowerCase();
+
+  let endpoint = '';
+  if (mime === 'application/vnd.google-apps.document') {
+    endpoint = `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=text%2Fplain`;
+  } else if (mime === 'application/vnd.google-apps.spreadsheet') {
+    endpoint = `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=text%2Fcsv`;
+  } else if (mime.startsWith('text/') || mime === 'application/json') {
+    endpoint = `https://www.googleapis.com/drive/v3/files/${id}?alt=media`;
+  } else {
+    return null;
+  }
+
+  try {
+    const response = await fetchDriveWithRetry(endpoint);
+    if (!response.ok) return null;
+    const text = await response.text();
+    const cleaned = sanitizeContextExcerpt(text);
+    return cleaned || null;
+  } catch {
+    return null;
+  }
+}

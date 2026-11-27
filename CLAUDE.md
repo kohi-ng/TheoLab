@@ -99,21 +99,47 @@ before committing.
   surfaced in the shared Context Bar. Keep their provider payload sanitized
   and bounded; do not attach document contents implicitly.
 
-## Library Viewer
+## AI Config Registry (`src/domain/ai/`)
 
-- `src/modules/library/libraryCatalog.js` owns the catalog and its categories:
-  learning documents, Formula Hub, and interactive widgets.
-- Selecting an item opens it on the Main Canvas. PDFs use `public/docs/`,
-  Google Drive/Docs links use preview URLs, and Markdown is parsed into DOM
-  nodes with text content and KaTeX rather than inserted as HTML. JSON is shown
-  with `textContent`; widget entries reuse the sandboxed Widget Plug contract.
+- `src/domain/ai/` is the single source of truth for AI providers, models,
+  defaults, and profiles (`schemas.ts`, `providerCatalog.ts`, `modelRegistry.ts`,
+  `migrations.ts`). Chat UI, `agentLoop.js`, Theon (`TheonSettings.svelte` /
+  `theonAgent.ts`), and `AiSettings.svelte` all read from `aiConfigStore.svelte.ts`.
+- Seed models are editable suggestions (`userAdded: false`); users can add, edit,
+  hide, fetch from `/models`, or configure multiple Custom OpenAI-compatible
+  endpoints. Vertex AI retains its `RETIRED_VERTEX_MODELS` guard.
+- Google AI Studio uses one unified API key input (shared between Google AI Studio
+  chat/Theon and `gemini-embedding-2` Vector Embedding), with optional sync to
+  owner-only Firestore Vault (`settings/secrets`) in `firebase_auth` mode.
+- JSON config export/import (`exportAiConfig` / `importAiConfig`) validates via
+  Zod and never includes API keys.
+
+## Library Viewer & Library v2 (`src/domain/library/`)
+
+- `src/domain/library/` (`schemas.ts`, `query.ts`, `migrations.ts`, `driveMapper.ts`)
+  defines Zod-validated `LibraryItem` and nested `LibraryFolder` models,
+  Vietnamese diacritic-insensitive search/sort/filter/group helpers, and Google
+  Picker/Drive mappers.
+- Persistence runs through `src/core/libraryRepository.ts` → `src/core/dataGateway.js`
+  with one document per entry (`library_items/{id}`, `library_folders/{id}` in
+  owner-only Firestore; `localStorage` in `dev_mock`), auto-migrating legacy
+  `settings/library_drive` / `theolab:library-drive`.
+- `src/modules/library/libraryCatalog.js` provides read-only built-in resources
+  (documents, Formula Hub, sandboxed widgets) merged alongside user items in the
+  shared Svelte 5 `LibraryBrowser.svelte` (used for both full canvas and drawer).
+- Adding from Google Drive uses the lazy-loaded Google Picker API (`googlePicker.ts`
+  + `DriveImportDialog.svelte`) with `drive.file` scope, multi-select files/folders,
+  confirmation/naming, plus manual link and in-app Google Doc/Sheet creation
+  fallbacks. Drive files are never downloaded on import; only explicit user
+  "Đính kèm vào Chat AI" actions pass sanitized, bounded context.
+- Selecting an item opens it on the Main Canvas via `libraryViewer.js`. PDFs use
+  `public/docs/`, Google Drive/Docs links use whitelisted preview URLs, Markdown
+  is parsed into DOM nodes with text content and KaTeX, JSON is shown with
+  `textContent`, and widgets reuse the sandboxed Widget Plug contract.
 - External resources are untrusted. Validate supported Google hosts, keep
   local asset paths constrained to `public/docs/`, and do not render imported
-  HTML or Markdown as executable markup.
-- The Context Bar can opt in to active lesson/block/widget state and explicit
-  lesson or Formula Hub attachments. Only pass sanitized lesson fields to an
-  Agent provider, and only send context when the user has enabled or selected
-  it. BYOK keys remain browser-local and are never included in session records.
+  HTML or Markdown as executable markup. BYOK keys remain browser-local and are
+  never included in session records.
 
 ## UI rules
 

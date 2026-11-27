@@ -45,7 +45,12 @@ export function openLibraryItemInDock(item: LibraryDockInput) {
 
 export function syncDockLibraryBridge(
   items: LibraryDockInput[],
-  onSaveDriveItem?: (input: { title: string; url: string }) => Promise<LibraryDockInput>,
+  onSaveDriveItem?: (input: {
+    title: string;
+    url: string;
+    driveFileId?: string;
+    mimeType?: string;
+  }) => Promise<LibraryDockInput>,
 ) {
   dockStore.setLibraryBridge(items, onSaveDriveItem);
 }

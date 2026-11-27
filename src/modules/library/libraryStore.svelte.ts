@@ -72,8 +72,14 @@ class LibraryStore {
       sourceLabel: item.sourceLabel,
       widget: item.widget,
     }));
-    syncDockLibraryBridge(dockItems, async ({ title, url }) => {
-      const created = await this.createItem({ title, url, source: 'drive' });
+    syncDockLibraryBridge(dockItems, async ({ title, url, driveFileId, mimeType }) => {
+      const created = await this.createItem({
+        title,
+        url,
+        driveFileId,
+        mimeType,
+        source: 'drive',
+      });
       return {
         id: created.id,
         title: created.title,
